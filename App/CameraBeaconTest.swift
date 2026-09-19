@@ -271,9 +271,11 @@ struct CameraBeaconTestView: View {
                 if model.testing {
                     ProgressView(value: model.intensity / 0.8).tint(PointTheme.action)
                         .accessibilityLabel("Pointing vibration strength")
+                        .accessibilityValue("\(Int(model.intensity / 0.8 * 100)) percent")
                     if let distance = model.distance {
                         Text("Beacon \(model.activeIndex + 1) of \(model.beaconCount) · \(distance, specifier: "%.1f") m away")
                             .font(.subheadline.monospacedDigit())
+                            .accessibilityLabel(Text("Beacon \(model.activeIndex + 1) of \(model.beaconCount), \(distance, specifier: "%.1f") meters away"))
                     }
                     Button("Pause pointing") { model.pauseTest() }.buttonStyle(PointFilledButtonStyle())
                 } else if model.finished {
