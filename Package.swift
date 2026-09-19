@@ -17,6 +17,6 @@ let package = Package(
         .executableTarget(name: "PointDemo", dependencies: ["PointCore"]),
         .executableTarget(name: "PointSimCLI", dependencies: ["PointSim"]),
         .testTarget(name: "PointCoreTests", dependencies: ["PointCore"]),
-        .testTarget(name: "PointSimTests", dependencies: ["PointSim"])
+        .testTarget(name: "PointSimTests", dependencies: ["PointSim", "PointCore"])
     ]
 )
