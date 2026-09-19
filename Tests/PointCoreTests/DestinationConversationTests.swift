@@ -38,6 +38,9 @@ struct DestinationConversationTests {
         #expect(WalkingRouteReview.prompt(destination: destination(), originCity: "Boston, MA", duration: 20 * 60) == nil)
         #expect(WalkingRouteReview.prompt(destination: destination(), originCity: "City of Boston", duration: 20 * 60) == nil)
         #expect(WalkingRouteReview.prompt(destination: destination(), originCity: "Dorchester", originCityAliases: ["Boston"], duration: 20 * 60) == nil)
+        // A neighbourhood label on the place ("Back Bay") with the destination geocoded to the origin's city.
+        #expect(WalkingRouteReview.prompt(destination: destination(city: "Back Bay"), originCity: "Boston", duration: 20 * 60,
+                                         destinationCityAliases: ["Boston", "Back Bay"]) == nil)
     }
 
     @Test func anotherCityTriggersEvenForShortWalks() {

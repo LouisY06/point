@@ -106,6 +106,10 @@ import Foundation
         if let command = scheduler.command(for: feedback, now: now) { send(command) }
     }
 
+    /// Event cues (a vehicle arriving) bypass the alignment scheduler. Callers send them after
+    /// any `stop()` so the reset's `.stop` cannot truncate the pattern.
+    public func emit(_ command: HapticCommand) { send(command) }
+
     private func resetFeedback() {
         engine.reset()
         scheduler.reset()

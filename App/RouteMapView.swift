@@ -18,15 +18,42 @@ import SwiftUI
     func clearHeading() { heading = nil; lastPublished = -.infinity }
 }
 
-/// Geometry is created once per route identity, never for a compass update.
+/// Geometry is created once per route identity, never for a compass update. For a transit
+/// journey the active walking leg is the route; other legs are drawn once as context.
 private final class RouteMapDrawing: ObservableObject {
+    struct Ride { let routeID: String; let polyline: MKPolyline; let color: Color; let isBus: Bool; let board: TransitStation; let alight: TransitStation; let isPassed: Bool }
     let polyline: MKPolyline
+    let otherWalks: [(MKPolyline, Bool)]
+    let rides: [Ride]
     let region: MKCoordinateRegion
 
-    init(route: RoutePlan) {
+    init(route: RoutePlan, journey: JourneyPlan?, legIndex: Int?) {
         let coordinates = route.checkpoints.map(\.coordinate)
         polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
-        let rect = polyline.boundingMapRect
+        var walks: [(MKPolyline, Bool)] = []
+        var rides: [Ride] = []
+        var rect = polyline.boundingMapRect
+        if let journey {
+            for (index, leg) in journey.legs.enumerated() {
+                let passed = legIndex.map { index < $0 } ?? false
+                switch leg {
+                case .walk(let plan) where plan.id != route.id:
+                    let points = plan.checkpoints.map(\.coordinate)
+                    let line = MKPolyline(coordinates: points, count: points.count)
+                    walks.append((line, passed))
+                    rect = rect.union(line.boundingMapRect)
+                case .ride(let ride):
+                    let line = MKPolyline(coordinates: ride.path, count: ride.path.count)
+                    // Subway lines keep their MBTA colours; buses use one calm slate blue instead of MBTA yellow.
+                    rides.append(Ride(routeID: ride.route.id, polyline: line, color: ride.route.isBus ? Color(red: 0.29, green: 0.44, blue: 0.65) : Color(hex: ride.route.colorHex), isBus: ride.route.isBus,
+                                      board: ride.board, alight: ride.alight, isPassed: passed))
+                    rect = rect.union(line.boundingMapRect)
+                default: break
+                }
+            }
+        }
+        otherWalks = walks
+        self.rides = rides
         let bounds = MKCoordinateRegion(rect)
         region = MKCoordinateRegion(center: bounds.center,
                                     span: .init(latitudeDelta: min(170, max(0.003, bounds.span.latitudeDelta * 1.8)),
@@ -38,17 +65,37 @@ struct RouteMapView: View {
     let route: RoutePlan
     var activeBeaconIndex: Int?
     var phoneLocation: CLLocation?
+    var journey: JourneyPlan?
+    var journeyLegIndex: Int?
     @ObservedObject var telemetry: RouteMapTelemetry
     @StateObject private var drawing: RouteMapDrawing
     @State private var position: MapCameraPosition = .automatic
     @State private var mapHeading: Double = 0
 
-    init(route: RoutePlan, activeBeaconIndex: Int?, phoneLocation: CLLocation?, telemetry: RouteMapTelemetry) {
+    init(route: RoutePlan, activeBeaconIndex: Int?, phoneLocation: CLLocation?, telemetry: RouteMapTelemetry,
+         journey: JourneyPlan? = nil, journeyLegIndex: Int? = nil) {
         self.route = route
         self.activeBeaconIndex = activeBeaconIndex
         self.phoneLocation = phoneLocation
         self.telemetry = telemetry
-        _drawing = StateObject(wrappedValue: RouteMapDrawing(route: route))
+        self.journey = journey
+        self.journeyLegIndex = journeyLegIndex
+        _drawing = StateObject(wrappedValue: RouteMapDrawing(route: route, journey: journey, legIndex: journeyLegIndex))
+    }
+
+    /// The ride whose stop the active walking leg's own beacon already marks (the leg right after it).
+    private var rideBoardedByRoute: RideLeg? {
+        guard let journey, route.beacons.last?.kind == .boardStop,
+              let index = journey.legs.firstIndex(where: { if case .walk(let plan) = $0 { return plan.id == route.id } else { return false } }),
+              journey.legs.indices.contains(index + 1), case .ride(let ride) = journey.legs[index + 1] else { return nil }
+        return ride
+    }
+
+    /// The vehicle glyph for the stop this walking leg ends on.
+    private var boardGlyph: String {
+        guard let journey, let index = journeyLegIndex ?? 0 as Int?, journey.legs.indices.contains(index + 1),
+              case .ride(let ride) = journey.legs[index + 1] else { return "tram.fill" }
+        return ride.route.isBus ? "bus.fill" : "tram.fill"
     }
 
     var body: some View {
@@ -58,6 +105,24 @@ struct RouteMapView: View {
                     PhoneDirectionAnnotation(heading: telemetry.heading, location: location, mapHeading: mapHeading)
                 }
             } else { UserAnnotation() }
+            ForEach(Array(drawing.otherWalks.enumerated()), id: \.offset) { _, walk in
+                MapPolyline(walk.0).stroke(PointTheme.route.opacity(walk.1 ? 0.35 : 0.6), lineWidth: 4)
+            }
+            // A ride is a solid line in its own colour with no beacons along it: green where you get
+            // on, red where you get off. Solid, not dashed: dash patterns redraw visibly on map updates.
+            ForEach(Array(drawing.rides.enumerated()), id: \.offset) { _, ride in
+                MapPolyline(ride.polyline).stroke(.white.opacity(ride.isPassed ? 0.4 : 0.9), lineWidth: 8)
+                MapPolyline(ride.polyline).stroke(ride.color.opacity(ride.isPassed ? 0.45 : 1), lineWidth: 5)
+                if rideBoardedByRoute.map({ $0.board.id != ride.board.id || $0.route.id != ride.routeID }) ?? true {
+                    Annotation(ride.board.name, coordinate: ride.board.coordinate, anchor: .bottom) {
+                        StopBeacon(color: .green, glyph: ride.isBus ? "bus.fill" : "tram.fill", passed: ride.isPassed,
+                                   label: "Get on the \(ride.isBus ? "bus" : "train") at \(ride.board.name)")
+                    }
+                }
+                Annotation(ride.alight.name, coordinate: ride.alight.coordinate, anchor: .top) {
+                    StopBeacon(color: .red, glyph: "figure.walk", passed: ride.isPassed, label: "Get off at \(ride.alight.name)")
+                }
+            }
             MapPolyline(drawing.polyline).stroke(.white, lineWidth: 9)
             MapPolyline(drawing.polyline).stroke(PointTheme.route, lineWidth: 5)
             if let start = route.checkpoints.first {
@@ -69,14 +134,16 @@ struct RouteMapView: View {
             }
             ForEach(RouteMapWindow.beaconIndices(count: route.beacons.count, activeIndex: activeBeaconIndex), id: \.self) { index in
                 let beacon = route.beacons[index]
+                let isBoard = beacon.kind == .boardStop
                 Annotation(beacon.isFinalDestination ? route.destinationName : "Next point", coordinate: beacon.coordinate) {
-                    Image(systemName: beacon.isFinalDestination ? "mappin" : "circle.fill")
+                    Image(systemName: isBoard ? boardGlyph : beacon.isFinalDestination ? "mappin" : "circle.fill")
                         .font(beacon.isFinalDestination ? .title2.bold() : .caption2)
                         .foregroundStyle(.white)
                         .padding(beacon.isFinalDestination ? 12 : 5)
-                        .background(PointTheme.accent, in: Circle())
+                        .background(isBoard ? Color.green : PointTheme.accent, in: Circle())
                         .overlay(Circle().stroke(.white, lineWidth: index == activeBeaconIndex ? 3 : 0).padding(-5))
-                        .accessibilityLabel(index == activeBeaconIndex ? "Active beacon" : beacon.isFinalDestination ? "Destination" : "Route beacon \(index + 1)")
+                        .accessibilityLabel(index == activeBeaconIndex ? (isBoard ? "Active beacon: the stop to get on" : "Active beacon")
+                                            : beacon.isFinalDestination ? (isBoard ? "Stop to get on" : "Destination") : "Route beacon \(index + 1)")
                 }
             }
         }
@@ -86,6 +153,33 @@ struct RouteMapView: View {
             if abs(mapHeading - $0.camera.heading) > 0.2 { mapHeading = $0.camera.heading }
         }
         .onAppear { position = .region(drawing.region) }
+    }
+}
+
+/// Same silhouette as a destination beacon, so the map reads as one system; only the colour says
+/// "get on" (green) or "get off" (red).
+private struct StopBeacon: View {
+    let color: Color
+    let glyph: String
+    let passed: Bool
+    let label: String
+    var body: some View {
+        Image(systemName: glyph)
+            .font(.title2.bold())
+            .foregroundStyle(.white)
+            .padding(12)
+            .background(color.opacity(passed ? 0.45 : 1), in: Circle())
+            .overlay(Circle().stroke(.white, lineWidth: 3).padding(-3))
+            .accessibilityLabel(label)
+    }
+}
+
+extension Color {
+    /// MBTA route colours arrive as six hex digits without a leading #.
+    init(hex: String) {
+        var value: UInt64 = 0
+        Scanner(string: hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))).scanHexInt64(&value)
+        self.init(red: Double((value >> 16) & 0xFF) / 255, green: Double((value >> 8) & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
     }
 }
 

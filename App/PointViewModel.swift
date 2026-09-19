@@ -6,7 +6,7 @@ import SwiftUI
 import UIKit
 
 @MainActor final class PointViewModel: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
-    enum Stage { case home, recording, searching, clarifying, choosing, route }
+    enum Stage { case home, recording, searching, clarifying, choosing, journeyChoice, route }
     @Published var stage: Stage = .home
     @Published var transcript = ""
     @Published var candidates: [PlaceCandidate] = []
@@ -27,6 +27,24 @@ import UIKit
     @Published var usePhoneAsGlove = true
     @Published private(set) var journeyState: JourneyState = .idle
     @Published private(set) var activeBeaconIndex: Int?
+    // Public transportation: walk → ride → walk, coordinated above the walking controller. There is
+    // no mode switch: a short walk just walks, a long one asks "T or walk?", and the utterance can decide.
+    static let offerTransitAboveMinutes = 10.0
+    @Published private(set) var journeyCandidates: [JourneyPlan] = []
+    @Published private(set) var journeyPlan: JourneyPlan?
+    @Published private(set) var journeyPhase: JourneyCoordinator.Phase = .idle
+    @Published private(set) var transitCountdown: JourneyCoordinator.Countdown?
+    @Published private(set) var transitAlerts: [TransitAlert] = []
+    @Published private(set) var awaitingSignal = false
+    @Published private(set) var liveTransitData = true
+    @Published private(set) var journeyReplanReason: String?
+    private(set) var journey: JourneyCoordinator!
+    private let transit: MBTAClient
+    private var transitRequested = false
+    private var walkingRequested = false
+    /// The pending confirmation is "take transit instead?" rather than "is this the place?".
+    @Published private(set) var pendingTransitOffer = false
+    private var pendingJourneyPlace: PlaceCandidate?
     let mapTelemetry = RouteMapTelemetry()
     let phoneTester = PhoneBeaconTester()
     let recorder = VoiceRecorder()
@@ -50,7 +68,9 @@ import UIKit
 
     // Local development only. Production app should inject authenticated backend implementations
     // of SpeechTranscribing and SpeechSynthesizing. MapKit needs no key.
-    private var developmentVoiceConfiguration: VoiceConfiguration {
+    private var developmentVoiceConfiguration: VoiceConfiguration { Self.loadDevelopmentConfiguration() }
+
+    private static func loadDevelopmentConfiguration() -> VoiceConfiguration {
         #if DEBUG
         // A launch from the home screen has no Xcode environment, so also accept a dev.env file
         // copied into the app's Documents folder (see README). Never bundled or committed.
@@ -62,8 +82,16 @@ import UIKit
         #endif
     }
     override init() {
+        transit = MBTAClient(apiKey: Self.loadDevelopmentConfiguration().mbtaKey)
         super.init()
         controller = PointController(glove: glove)
+        journey = JourneyCoordinator(controller: controller, transit: transit)
+        journey.onEvent = { [weak self] event in self?.handle(journeyEvent: event) }
+        journey.$phase.sink { [weak self] in self?.journeyPhase = $0 }.store(in: &subscriptions)
+        journey.$countdown.sink { [weak self] in self?.transitCountdown = $0 }.store(in: &subscriptions)
+        journey.$alerts.sink { [weak self] in self?.transitAlerts = $0 }.store(in: &subscriptions)
+        journey.$awaitingSignal.sink { [weak self] in self?.awaitingSignal = $0 }.store(in: &subscriptions)
+        journey.$liveDataAvailable.sink { [weak self] in self?.liveTransitData = $0 }.store(in: &subscriptions)
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         // Physical camera/top edge is forward, independent of UI rotation or screen-down grip.
@@ -73,12 +101,8 @@ import UIKit
         controller.navigation.$state.sink { [weak self] state in
             guard let self else { return }
             journeyState = state
-            if state == .arrived {
-                locationManager.allowsBackgroundLocationUpdates = false
-                locationManager.stopUpdatingHeading()
-                mapTelemetry.clearHeading()
-                phoneTester.stop(status: "You’ve arrived")
-            }
+            // A transit journey's walking legs also "arrive" at each stop; the coordinator owns that.
+            if state == .arrived, journeyPlan == nil { finishArrival() }
         }.store(in: &subscriptions)
         controller.navigation.$beaconIndex.sink { [weak self] index in
             self?.activeBeaconIndex = index
@@ -161,10 +185,14 @@ import UIKit
         currentLocation = location
         let previouslyOffRoute = controller.navigation.rerouteRequired
         let arrival = controller.updateLocation(location)
+        if journeyPlan != nil { journey.updateLocation(location) }
         pointingAligned = controller.feedback.shouldConfirm
         if journeyStarted, let arrival {
-            announce(arrival.isDestination ? "You've arrived at \(selectedPlace?.name ?? "your destination")."
-                     : "Beacon \(arrival.index + 1) reached. Point toward beacon \(arrival.index + 2).")
+            // On a transit journey the coordinator announces stops and the final arrival itself.
+            if journeyPlan == nil || !arrival.isDestination {
+                announce(arrival.isDestination ? "You've arrived at \(selectedPlace?.name ?? "your destination")."
+                         : "Beacon \(arrival.index + 1) reached. Point toward beacon \(arrival.index + 2).")
+            }
             if usePhoneAsGlove { phoneTester.reachedBeacon(arrival) }
         } else if journeyStarted, !previouslyOffRoute, controller.navigation.rerouteRequired {
             announce("You seem to be off the route. Check the map before continuing.")
@@ -247,11 +275,17 @@ import UIKit
     private func search(_ text: String) async {
         let reply = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
         if ["cancel", "never mind", "nevermind", "stop"].contains(reply) { cancel(); return }
+        // "Take the T to…" plans transit; "walk me to…" skips the transit offer.
+        if TransitPhrases.impliesTransit(text) { transitRequested = true; walkingRequested = false }
+        else if TransitPhrases.impliesWalking(text) { walkingRequested = true; transitRequested = false }
         if pendingRoute != nil {
-            if ["yes", "yeah", "yep", "sure", "correct", "that's right", "that is correct"].contains(reply) {
+            // Answering the "T or walk?" offer: any transit or walking phrase is a complete answer.
+            if pendingTransitOffer, TransitPhrases.impliesTransit(text) { await confirmPendingRoute(); return }
+            if pendingTransitOffer, TransitPhrases.impliesWalking(text) { declineDestination(); return }
+            if ["yes", "yeah", "yep", "sure", "correct", "that's right", "that is correct", "transit", "the t", "train", "bus"].contains(reply) {
                 await confirmPendingRoute(); return
             }
-            if ["no", "nope", "not right", "that's wrong"].contains(reply) { declineDestination(); return }
+            if ["no", "nope", "not right", "that's wrong", "walk", "i'll walk", "walking"].contains(reply) { declineDestination(); return }
         }
         var query = VoiceDestination.destinationQuery(from: text)
         let configuration = developmentVoiceConfiguration
@@ -369,6 +403,12 @@ import UIKit
         stopSpokenReply()
         recordingLimit?.cancel()
         recorder.cancel()
+        if pendingTransitOffer, let pending = pendingRoute {
+            // "No" to the transit offer means walk.
+            pendingTransitOffer = false
+            showRoute(pending.plan, to: pending.place)
+            return
+        }
         pendingRoute = nil
         requestedCity = nil
         candidates = []
@@ -384,6 +424,14 @@ import UIKit
             requestLocation()
             return
         }
+        if pendingTransitOffer {
+            // "Yes" to the transit offer.
+            pendingTransitOffer = false
+            pendingRoute = nil
+            stage = .searching
+            await planJourney(to: pending.place, from: location)
+            return
+        }
         if Date().timeIntervalSince(pending.created) > 120 || location.distance(from: pending.origin) > 100 {
             // Recalculate and ask again when the facts behind the confirmation have changed.
             pendingRoute = nil
@@ -394,6 +442,7 @@ import UIKit
     }
 
     private func showRoute(_ plan: RoutePlan, to place: PlaceCandidate) {
+        pendingTransitOffer = false
         pendingRoute = nil
         followUpPrompt = nil
         requestedCity = nil
@@ -433,22 +482,195 @@ import UIKit
             return
         }
         stage = .searching
+        if transitRequested {
+            await planJourney(to: place, from: location)
+            return
+        }
         do {
             let originCity = await resolveOriginCity(at: location)
             try Task.checkCancellation()
             let plan = try await maps.walkingRoute(from: location.coordinate, to: place.coordinate, name: place.name)
             guard !Task.isCancelled else { return }
-            if let prompt = WalkingRouteReview.prompt(destination: place, originCity: originCity?.name,
-                                                     originCityAliases: originCity?.aliases ?? [], duration: plan.expectedTravelTime,
-                                                     routeDistanceMeters: plan.checkpoints.last?.distanceFromStartMeters) {
+            // Reverse-geocode the destination the same way as the origin, so a place in the city
+            // you are standing in never asks "are you sure" because of a neighbourhood label.
+            let destinationCity = try? await maps.city(near: CLLocation(latitude: place.coordinate.latitude, longitude: place.coordinate.longitude))
+            guard !Task.isCancelled else { return }
+            let review = WalkingRouteReview.prompt(destination: place, originCity: originCity?.name,
+                                                   originCityAliases: originCity?.aliases ?? [], duration: plan.expectedTravelTime,
+                                                   routeDistanceMeters: plan.checkpoints.last?.distanceFromStartMeters,
+                                                   destinationCityAliases: [destinationCity?.name].compactMap { $0 } + (destinationCity?.aliases ?? []))
+            let minutes = plan.expectedTravelTime.map { Int(ceil($0 / 60)) }
+            if !walkingRequested, let minutes, Double(minutes) > Self.offerTransitAboveMinutes {
+                // Far enough for the T or a bus: ask, and let "yes"/"no" or a transit/walk phrase answer.
                 pendingRoute = (place, plan, location, Date())
-                ask(prompt)
+                pendingTransitOffer = true
+                let city = review?.contains("is in") == true ? " in \(place.city ?? "")" : ""
+                ask("\(place.name)\(city) is about a \(minutes) minute walk. Want to take the T or a bus instead? Say yes for transit, or no to walk.")
+            } else if let review {
+                pendingRoute = (place, plan, location, Date())
+                ask(review)
             } else { showRoute(plan, to: place) }
         } catch {
             guard !Task.isCancelled else { return }
             pendingRoute = nil
             ask("I couldn't get a walking route there. Which place would you like to try instead?")
         }
+    }
+
+    // MARK: Public transportation
+
+    private func planJourney(to place: PlaceCandidate, from location: CLLocation) async {
+        do {
+            var options = TransitPlanner.Options()
+            if transitRequested { options.walkOnlyBelowMeters = 0 } // Asked for the T or a bus: try, even for a short hop.
+            let plans = try await TransitPlanner.plan(from: location.coordinate, to: place.coordinate, destinationName: place.name,
+                                                      walking: maps, transit: transit, options: options)
+            guard !Task.isCancelled else { return }
+            if plans.count == 1, plans[0].isWalkingOnly, let walk = plans[0].firstWalk {
+                showRoute(walk, to: place)
+                announce(transitRequested ? "I couldn't find a bus or train for that trip, so here's the walk. \(NavigationSpeech.routeReady(for: place))"
+                         : "That's close enough to walk. \(NavigationSpeech.routeReady(for: place))")
+                return
+            }
+            journeyCandidates = plans
+            pendingJourneyPlace = place
+            pendingRoute = nil
+            followUpPrompt = nil
+            candidates = []
+            stage = .journeyChoice
+            announce("Here's a route by transit. \(plans[0].summary) Tap it to confirm, or pick another.")
+        } catch {
+            guard !Task.isCancelled else { return }
+            ask("I couldn't plan a transit trip there. Which place would you like to try instead?")
+        }
+    }
+
+    func selectJourney(_ plan: JourneyPlan) {
+        guard let place = pendingJourneyPlace, let walk = plan.firstWalk else { return }
+        work?.cancel()
+        stopSpokenReply()
+        journeyCandidates = []
+        journeyPlan = plan
+        journeyReplanReason = nil
+        pendingRoute = nil
+        followUpPrompt = nil
+        requestedCity = nil
+        candidates = []
+        selectedPlace = place
+        route = walk
+        stage = .route
+        locationManager.startUpdatingHeading()
+        announce("Transit route ready. \(plan.summary) Tap Start when you're ready.")
+    }
+
+    var isWalkingLeg: Bool { if case .walking = journeyPhase { return true } else { return false } }
+
+    /// Plain-language state for the route panel and VoiceOver.
+    var journeyStatusText: String {
+        guard let journeyPlan else { return "" }
+        func ride(_ leg: Int) -> RideLeg? { if case .ride(let ride) = journeyPlan.legs[leg] { return ride } else { return nil } }
+        switch journeyPhase {
+        case .idle: return "Ready"
+        case .walking(let leg):
+            if awaitingSignal { return "Head for the exit · Directions resume when GPS returns" }
+            if case .walk(let walk) = journeyPlan.legs[leg] { return "Walk to \(walk.destinationName)" }
+            return "Walking"
+        case .waitingAtStop(let leg):
+            guard let ride = ride(leg) else { return "Waiting" }
+            if !liveTransitData { return "At \(ride.board.name) · No signal for live arrivals" }
+            if let countdown = transitCountdown {
+                let when = countdown.status ?? countdown.secondsAway.map { $0 < 60 ? "now" : "in \($0 / 60) min" } ?? ""
+                return "\(ride.route.name) toward \(countdown.headsign) \(when)"
+            }
+            return "At \(ride.board.name) · Waiting for the \(ride.route.name)"
+        case .vehicleArriving(let leg, _):
+            guard let ride = ride(leg) else { return "Arriving" }
+            return "\(ride.route.name) toward \(ride.headsign) is here · Board now"
+        case .riding(let leg, _, let confirmed, let tracking):
+            guard let ride = ride(leg) else { return "Riding" }
+            if tracking == .lost { return "Riding · Live tracking lost · Tap I'm off at \(ride.alight.name)" }
+            return confirmed ? "Riding \(ride.route.name) · Get off at \(ride.alight.name)" : "Did you board the \(ride.route.name)?"
+        case .alighting(let leg, _):
+            return "Get off here at \(ride(leg)?.alight.name ?? "this stop")"
+        case .needsReplan(let reason): return reason
+        case .arrived: return "You've arrived"
+        }
+    }
+
+    func confirmAtStop() { journey.confirmAtStop() }
+    func confirmBoarded() { journey.confirmBoarded() }
+    func notOnBoard() { journey.notOnBoard() }
+    func confirmAlighted() { journey.confirmAlighted() }
+
+    func replanJourney() {
+        guard let place = selectedPlace, let location = currentLocation else { return }
+        journey.stop()
+        phoneTester.stop()
+        journeyPlan = nil
+        journeyReplanReason = nil
+        journeyStarted = false
+        stage = .searching
+        work?.cancel()
+        work = Task { await planJourney(to: place, from: location) }
+    }
+
+    private func handle(journeyEvent event: JourneyCoordinator.Event) {
+        guard let journeyPlan else { return }
+        switch event {
+        case .walkingLegStarted(let leg, let toward):
+            if case .walk(let walk) = journeyPlan.legs[leg] { route = walk }
+            guard leg > 0 else { return }
+            if !awaitingSignal, usePhoneAsGlove { startPhonePointing() }
+            if !awaitingSignal { announce("Now walk to \(toward). Hold the phone screen down to feel the direction.") }
+        case .reachedStop(let ride):
+            phoneTester.stop(status: "At \(ride.board.name) · Waiting for the \(ride.route.name)")
+            announce("You're at \(ride.board.name). Wait for the \(ride.route.name) toward \(ride.headsign). I'll buzz when it arrives.")
+        case .vehicleArriving(let ride):
+            if usePhoneAsGlove { phoneTester.vehicleArrived(message: "\(ride.route.name) is here · Board now") }
+            announce("Your \(ride.route.name) toward \(ride.headsign) is here. Board now.")
+        case .departedTentatively:
+            announce("If you boarded, tap I'm on board. If not, tap Not on board.")
+        case .boarded(let ride):
+            let stops = ride.stopsRidden == 1 ? "one stop" : "\(ride.stopsRidden) stops"
+            announce("On the \(ride.route.name). \(stops) to \(ride.alight.name). I'll tell you when to get off.")
+        case .notOnBoard(let ride):
+            announce("Okay. Waiting for the next \(ride.route.name).")
+        case .nextStopIsYours(let ride):
+            announce("Next stop is \(ride.alight.name). Get ready.")
+        case .alightHere(let ride):
+            if usePhoneAsGlove { phoneTester.vehicleArrived(message: "Get off here · \(ride.alight.name)") }
+            announce("Get off here at \(ride.alight.name).")
+        case .alighted: break
+        case .trackingLost(let ride):
+            announce("I lost live tracking. Tap I'm off when you reach \(ride.alight.name).")
+        case .awaitingSignal:
+            phoneTester.stop(status: "Waiting for GPS · Head for the exit")
+            announce("Head for the exit. Directions resume once GPS returns.")
+        case .signalRestored(let leg):
+            if usePhoneAsGlove { startPhonePointing() }
+            let toward: String = { if case .walk(let walk) = journeyPlan.legs[leg] { return walk.destinationName } else { return "your destination" } }()
+            announce("GPS is back. Walk to \(toward).")
+        case .liveDataLost:
+            announce("No signal for live arrivals. Listen for your ride; I'll update when signal returns.")
+        case .liveDataRestored:
+            announce("Live arrivals are back.")
+        case .notice(let text):
+            announce(text)
+        case .needsReplan(let reason):
+            phoneTester.stop(status: reason)
+            journeyReplanReason = reason
+            announce("\(reason) Tap Replan to plan again from here.")
+        case .arrived:
+            finishArrival()
+            announce("You've arrived at \(journeyPlan.destinationName).")
+        }
+    }
+
+    private func finishArrival() {
+        locationManager.allowsBackgroundLocationUpdates = false
+        locationManager.stopUpdatingHeading()
+        mapTelemetry.clearHeading()
+        phoneTester.stop(status: "You’ve arrived")
     }
 
     func playVoiceDemo() {
@@ -502,6 +724,20 @@ import UIKit
 
     func startJourney() {
         guard let route else { return }
+        if let journeyPlan {
+            do {
+                try journey.start(journeyPlan, at: currentLocation)
+                journeyStarted = true
+                locationManager.allowsBackgroundLocationUpdates = true
+                locationManager.showsBackgroundLocationIndicator = true
+                locationManager.pausesLocationUpdatesAutomatically = false
+                if let currentLocation { controller.updateLocation(currentLocation); journey.updateLocation(currentLocation) }
+                if usePhoneAsGlove { startPhonePointing() }
+                let first = journeyPlan.rides.first.map { "Walk to \($0.board.name) first." } ?? ""
+                announce("Trip started. \(first) Hold the phone screen down to feel the direction.")
+            } catch { fail(error) }
+            return
+        }
         do {
             try controller.start(route, at: isDemo ? nil : currentLocation)
             if isDemo { glove.connect() }
@@ -557,6 +793,14 @@ import UIKit
         recordingLimit?.cancel()
         stopSpokenReply()
         recorder.cancel()
+        journey.stop()
+        journeyPlan = nil
+        journeyCandidates = []
+        journeyReplanReason = nil
+        pendingJourneyPlace = nil
+        transitRequested = false
+        walkingRequested = false
+        pendingTransitOffer = false
         controller.stop()
         glove.disconnect()
         route = nil
@@ -589,6 +833,12 @@ import UIKit
 
     func sceneActive() {
         guard stage == .route, !isDemo else { return }
+        if journeyPlan != nil {
+            journey.tick() // Reconcile after a suspension: polls restart, a missed stop is noticed.
+            if journeyStarted, isWalkingLeg, !awaitingSignal, journeyState == .navigating, usePhoneAsGlove { startPhonePointing() }
+            else if !journeyStarted { locationManager.startUpdatingHeading() }
+            return
+        }
         if journeyStarted, journeyState == .navigating, usePhoneAsGlove {
             startPhonePointing()
         } else if !journeyStarted {

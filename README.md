@@ -28,6 +28,19 @@ swift run point-demo
 
 `PointCore` is a local Swift package, usable on iOS 17+ and macOS 14+. Apple MapKit handles map display, place search, and walking directions. No Google SDK, Google account, maps API key, or maps backend is required.
 
+## Public transportation mode
+
+There is no mode switch. A walk of up to about 10 minutes just walks. Anything longer asks by voice — "Copley is about a 25 minute walk. Want to take the T or a bus instead?" — and **yes / no**, or any transit or walking phrase, answers it. Saying "take the T to…" or "by bus" plans transit straight away; "walk me to…" skips the question. A transit trip is planned walk → ride → walk from [MBTA](https://api-v3.mbta.com) route data and Apple walking directions, offered as up to three trips to confirm, and then:
+
+- guides you with normal beacons to the stop; the last one sits **on the stop to board** and is **green**, the stop to get off is **red**, and the ride between them is a solid line (subway lines in their MBTA colours, buses in slate blue) with no beacons;
+- stops all pointing feedback while you wait and ride;
+- watches live MBTA predictions for **your line, direction and branch**, and plays a distinct **four-pulse buzz** when your vehicle is at the platform, then again when it is time to get off;
+- boards and alights automatically from vehicle tracking, with **I'm at the stop / I'm on board / Not on board / I'm off** as overrides;
+- handles transfers at rapid-transit stations the same way, and holds walking instructions after you step off until GPS returns outside;
+- says when live data or GPS is lost and when it returns, and offers **Replan** if you seem to be on the wrong train or missed your stop.
+
+No key is required (20 MBTA requests/min); add `MBTA_API_KEY` to `.env` for the demo. See [the transit design](docs/TRANSIT_MODE_PLAN.md). Not covered: commuter rail, ferries, fares, and any claim of obstacle safety.
+
 ## Device connection
 
 To test before the glove is ready, tap **Test beacons** on the home screen. Use the camera to place nearby points (0.5–8 m), then hold the phone flat, screen down, with the camera end along your pointing finger. Vibration smoothly strengthens toward the next beacon. Real walking routes also offer **Phone vibration guidance**, using GPS and compass instead. Both need a physical iPhone for vibration. See [phone and nearby-beacon testing](docs/PHONE_BEACON_TEST.md).
