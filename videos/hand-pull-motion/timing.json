@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "durationSeconds": 2.3,
   "fps": 30,
   "encodedSize": {"width": 780, "height": 920},
@@ -9,7 +9,9 @@
   "idleImageRect": {"x": 95.0709219858, "y": 30, "width": 219.8581560284, "height": 400},
   "reachAndPinch": {"start": 0.10, "end": 0.65},
   "gripHold": {"start": 0.65, "end": 0.78},
-  "pull": {"start": 0.78, "end": 1.65, "edgeXStart": -10, "edgeXEnd": 410, "contactY": 205, "easing": "u=clamp((t-0.78)/0.87,0,1); p=u*u*(3-2*u); edgeX=-10+420*p"},
+  "panel": {"x": 16, "y": 124, "width": 358, "height": 208, "cornerRadius": 18, "opaque": true},
+  "pull": {"start": 0.78, "end": 1.65, "edgeXStart": -12, "edgeXEnd": 374, "contactOffsetX": -8, "contactY": 181, "easing": "u=clamp((t-0.78)/0.87,0,1); p=u*u*u*(u*(u*6-15)+10); edgeX=-12+386*p"},
+  "grip": {"sourceIndexPad": [405, 150], "indexBoneAngles": [-50, -115, -112], "thumbBoneAngles": [5, 10], "depthOrder": "rear thumb and palm, opaque native panel, front index", "panelOcclusion": "rear-plane alpha matte, same panel geometry and playback frame"},
   "releaseExit": {"start": 1.65, "end": 2.18},
   "transparentTail": {"start": 2.18, "end": 2.30},
   "contains": "hand only, no background, banner, text or audio",

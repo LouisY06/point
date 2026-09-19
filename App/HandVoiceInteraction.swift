@@ -26,13 +26,18 @@ struct HandVoiceInteraction: View {
             let scale = geometry.size.width / HandMotionTiming.width
             let bannerEdge = HandMotionTiming.bannerEdge(at: motion.seconds)
             let posterRect = HandMotionTiming.stillRect
-            let bannerHeight = max(210 * scale, transcriptSize * (dynamicType.isAccessibilitySize ? 5.5 : 3.8))
+            let panel = HandMotionTiming.bannerRect
+            let bannerHeight = max(panel.height * scale, transcriptSize * (dynamicType.isAccessibilitySize ? 5.5 : 3.8))
+            let panelShape = RoundedRectangle(cornerRadius: HandMotionTiming.bannerRadius * scale, style: .circular)
             ZStack(alignment: .topLeading) {
                 listeningBanner
-                    .frame(width: geometry.size.width, height: bannerHeight)
-                    .background(Color(red: 0.035, green: 0.04, blue: 0.045).opacity(0.97))
-                    .offset(x: simpleMotion ? 0 : (bannerEdge - HandMotionTiming.width) * scale,
-                            y: 150 * scale)
+                    .frame(width: panel.width * scale, height: bannerHeight)
+                    .background(Color(red: 0.055, green: 0.063, blue: 0.068), in: panelShape)
+                    .overlay(panelShape.strokeBorder(.white.opacity(0.14), lineWidth: 0.75))
+                    .clipShape(panelShape)
+                    .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 8)
+                    .offset(x: simpleMotion ? panel.minX * scale : (bannerEdge - panel.width) * scale,
+                            y: panel.minY * scale)
                     .opacity(active && (motion.seconds > 0.78 || motion.finished) ? 1 : 0)
                     .allowsHitTesting(active && motion.finished)
                     .accessibilityHidden(!active || !motion.finished)
@@ -73,7 +78,7 @@ struct HandVoiceInteraction: View {
                 }
                 .foregroundStyle(.white)
                 .frame(width: geometry.size.width)
-                .position(x: geometry.size.width / 2, y: max(442 * scale, 150 * scale + bannerHeight + 42))
+                .position(x: geometry.size.width / 2, y: max(442 * scale, panel.minY * scale + bannerHeight + 42))
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
@@ -98,25 +103,23 @@ struct HandVoiceInteraction: View {
     }
 
     private var listeningBanner: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 9) {
                 VoiceActivity(searching: searching, quiet: simpleMotion || (!listening && !searching))
                     .frame(width: 22, height: 18)
                     .accessibilityHidden(true)
-                Text(searching ? "Finding your route…" : isDemo ? "Voice preview" : "Listening")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.76))
+                Text(searching ? "Finding your route" : "Listening")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.68))
             }
             ScrollViewReader { scroll in
                 ScrollView {
-                    Text(transcript.isEmpty ? "Speak into mic…" : transcript)
+                    Text(transcript.isEmpty ? "Where to?" : transcript)
                         .font(.system(size: transcriptSize, weight: .medium))
                         .tracking(-0.5)
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
-                        .contentTransition(.opacity)
-                        .animation(.easeOut(duration: 0.16), value: transcript)
                         .accessibilityFocused($transcriptFocused)
                     Color.clear.frame(height: 1).id("utterance-end").accessibilityHidden(true)
                 }

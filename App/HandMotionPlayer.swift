@@ -8,11 +8,17 @@ enum HandMotionTiming {
     static let width: CGFloat = 390
     static let height: CGFloat = 460
     static let duration = 2.30
+    static let framesPerSecond = 30.0
     static let stillRect = CGRect(x: 95.07, y: 30, width: 219.86, height: 400)
+    static let bannerRect = CGRect(x: 16, y: 124, width: 358, height: 208)
+    static let bannerRadius: CGFloat = 18
 
     static func bannerEdge(at seconds: Double) -> CGFloat {
         let u = min(1, max(0, (seconds - 0.78) / 0.87))
-        return min(width, max(0, -10 + 420 * u * u * (3 - 2 * u)))
+        // The hand and native panel use the same eased lerp, with no second
+        // SwiftUI animation to introduce lag between the grip and panel edge.
+        let progress = u * u * u * (u * (u * 6 - 15) + 10)
+        return -12 + (bannerRect.maxX + 12) * progress
     }
 }
 
@@ -57,7 +63,12 @@ enum HandMotionTiming {
             Task { @MainActor in
                 guard let self, self.generation == token, self.running else { return }
                 let value = time.seconds
-                if value.isFinite { self.seconds = min(HandMotionTiming.duration, max(0, value)) }
+                if value.isFinite {
+                    // The video holds each frame for 1/30s. Hold the banner on
+                    // the same sample instead of letting it lead the matte.
+                    let frameTime = floor(max(0, value) * HandMotionTiming.framesPerSecond) / HandMotionTiming.framesPerSecond
+                    self.seconds = min(HandMotionTiming.duration, frameTime)
+                }
             }
         }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in

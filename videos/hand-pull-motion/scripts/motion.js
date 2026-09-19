@@ -4,8 +4,12 @@ const canvas=document.getElementById('hand-canvas'),ctx=canvas.getContext('2d');
 const source=document.getElementById('hand-source');
 const clamp=x=>Math.max(0,Math.min(1,x));
 const smooth=x=>{x=clamp(x);return x*x*(3-2*x)};
+const smoother=x=>{x=clamp(x);return x*x*x*(x*(x*6-15)+10)};
 const mix=(a,b,p)=>a+(b-a)*p;
-const indexPoly=[[335,614],[343,559],[359,443],[366,335],[378,212],[382,146],[407,94],[454,73],[487,98],[500,153],[488,259],[483,366],[495,491],[503,588],[470,619]];
+// Shared with HandMotionTiming in Swift. The panel itself stays native.
+const PANEL={x:16,y:124,width:358,height:208,radius:18};
+// Include the loose ink just outside the contour so it travels with the finger.
+const indexPoly=[[335,614],[339,559],[351,443],[358,335],[370,212],[375,146],[400,94],[454,68],[493,98],[506,153],[496,259],[491,366],[500,491],[507,588],[470,619]];
 const thumbPoly=[[245,824],[179,749],[156,662],[105,590],[49,548],[17,568],[35,631],[68,705],[89,763],[139,850],[182,902]];
 function pathPolygon(c,pts){c.moveTo(...pts[0]);for(let i=1;i<pts.length;i++)c.lineTo(...pts[i]);c.closePath()}
 function makeLayer(poly){const c=document.createElement('canvas');c.width=930;c.height=1692;const cx=c.getContext('2d');cx.beginPath();pathPolygon(cx,poly);cx.clip();cx.drawImage(source,0,0);return c}
@@ -16,7 +20,9 @@ function add(a,b){return[a[0]+b[0],a[1]+b[1]]}
 function sub(a,b){return[a[0]-b[0],a[1]-b[1]]}
 function indexMap(x,y,p){
  const a=[421,575],b=[419,377],c=[432,238];
- const a1=-40*p,a2=-100*p,a3=-180*p;
+ // Keep the distal phalanx almost horizontal: contact is on its broad pad,
+ // roughly 80 source pixels back from the tip, rather than tip-to-tip.
+ const a1=-50*p,a2=-115*p,a3=-112*p;
  const B=add(a,rot(sub(b,a),a1)),C=add(B,rot(sub(c,b),a2));
  const root=add(a,rot(sub([x,y],a),a1));
  const mid=add(B,rot(sub([x,y],b),a2));
@@ -24,24 +30,63 @@ function indexMap(x,y,p){
  let pt;if(y>407)pt=root;else if(y>347){let q=smooth((407-y)/60);pt=[mix(root[0],mid[0],q),mix(root[1],mid[1],q)]}else if(y>263)pt=mid;else if(y>213){let q=smooth((263-y)/50);pt=[mix(mid[0],tip[0],q),mix(mid[1],tip[1],q)]}else pt=tip;
  let rootBlend=smooth((615-y)/65);return[mix(x,pt[0],rootBlend),mix(y,pt[1],rootBlend)];
 }
-function thumbMap(x,y,p){const a=[173,767],b=[100,692];const a1=10*p,a2=41*p;const B=add(a,rot(sub(b,a),a1));const root=add(a,rot(sub([x,y],a),a1));const tip=add(B,rot(sub([x,y],b),a2));let q=smooth((715-y)/45);let pt=[mix(root[0],tip[0],q),mix(root[1],tip[1],q)];let base=smooth((840-y)/85);return[mix(x,pt[0],base),mix(y,pt[1],base)]}
-function triangle(img,src,dst){const [a,b,c]=src,[A,B,C]=dst;const d=(b[0]-a[0])*(c[1]-a[1])-(c[0]-a[0])*(b[1]-a[1]);
+function thumbMap(x,y,p){const a=[173,767],b=[100,692];const a1=5*p,a2=10*p;const B=add(a,rot(sub(b,a),a1));const root=add(a,rot(sub([x,y],a),a1));const tip=add(B,rot(sub([x,y],b),a2));let q=smooth((715-y)/45);let pt=[mix(root[0],tip[0],q),mix(root[1],tip[1],q)];let base=smooth((840-y)/85);return[mix(x,pt[0],base),mix(y,pt[1],base)]}
+function triangle(ctx,img,src,dst){const [a,b,c]=src,[A,B,C]=dst;const d=(b[0]-a[0])*(c[1]-a[1])-(c[0]-a[0])*(b[1]-a[1]);
  const aa=((B[0]-A[0])*(c[1]-a[1])-(C[0]-A[0])*(b[1]-a[1]))/d;
  const bb=((B[1]-A[1])*(c[1]-a[1])-(C[1]-A[1])*(b[1]-a[1]))/d;
  const cc=((C[0]-A[0])*(b[0]-a[0])-(B[0]-A[0])*(c[0]-a[0]))/d;
  const dd=((C[1]-A[1])*(b[0]-a[0])-(B[1]-A[1])*(c[0]-a[0]))/d;
  ctx.save();ctx.beginPath();let cen=[(A[0]+B[0]+C[0])/3,(A[1]+B[1]+C[1])/3];for(let i=0;i<3;i++){const v=dst[i],dx=v[0]-cen[0],dy=v[1]-cen[1],len=Math.hypot(dx,dy);const px=v[0]+dx/len*.32,py=v[1]+dy/len*.32;i?ctx.lineTo(px,py):ctx.moveTo(px,py)}ctx.closePath();ctx.clip();ctx.transform(aa,bb,cc,dd,A[0]-aa*a[0]-cc*a[1],A[1]-bb*a[0]-dd*a[1]);ctx.drawImage(img,0,0);ctx.restore();}
-function mesh(img,fn,p,box){const step=18;for(let y=box[1];y<box[3];y+=step)for(let x=box[0];x<box[2];x+=step){const quad=[[x,y],[x+step,y],[x+step,y+step],[x,y+step]],d=quad.map(pt=>fn(...pt,p));triangle(img,[quad[0],quad[1],quad[2]],[d[0],d[1],d[2]]);triangle(img,[quad[0],quad[2],quad[3]],[d[0],d[2],d[3]])}}
+function mesh(ctx,img,fn,p,box){const step=18;for(let y=box[1];y<box[3];y+=step)for(let x=box[0];x<box[2];x+=step){const quad=[[x,y],[x+step,y],[x+step,y+step],[x,y+step]],d=quad.map(pt=>fn(...pt,p));triangle(ctx,img,[quad[0],quad[1],quad[2]],[d[0],d[1],d[2]]);triangle(ctx,img,[quad[0],quad[2],quad[3]],[d[0],d[2],d[3]])}}
 const state={t:0};
-function poseAt(t){const reach=smooth((t-.10)/.55),pull=smooth((t-.78)/.87),release=smooth((t-1.65)/.33),exit=smooth((t-1.68)/.50);
- const grip=reach*(1-release*.80),scale=mix(S,.216,reach);
- const gx=146,gy=565,edge=-10+420*pull;
- const tx=mix(IX,-10-gx*.216,reach)+420*pull+145*exit;
- const ty=mix(IY,205-gy*.216,reach)-27*exit;
- return {grip,scale,tx,ty,edge,reach,pull,release,exit};}
-function draw(){ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,780,920);if(!body)return;const p=poseAt(state.t);ctx.scale(2,2);
- if(window.PREVIEW){ctx.fillStyle='#262828';ctx.fillRect(0,0,W,H);ctx.strokeStyle='#454746';ctx.lineWidth=1;const paths=[[-30,120,420,55],[-20,365,425,255],[20,-30,260,490],[225,-30,370,490],[-20,205,420,100],[65,-30,400,490]];for(const l of paths){ctx.beginPath();ctx.moveTo(l[0],l[1]);ctx.lineTo(l[2],l[3]);ctx.stroke()}ctx.fillStyle='rgba(7,9,10,.90)';ctx.fillRect(0,150,Math.max(0,p.edge),210);ctx.save();ctx.beginPath();ctx.rect(0,150,Math.max(0,p.edge),210);ctx.clip();ctx.fillStyle='#f5f2e8';ctx.font='500 27px system-ui';ctx.fillText('Speak into the mic.',28+Math.min(0,p.edge-390),215);ctx.fillStyle='#a4a5a0';ctx.font='16px system-ui';ctx.fillText('Listening',28+Math.min(0,p.edge-390),300);ctx.restore()}
- ctx.save();ctx.translate(p.tx,p.ty);ctx.scale(p.scale,p.scale);ctx.beginPath();ctx.rect(-2000,-2000,5000,3515);ctx.clip();if(state.t<.10){ctx.drawImage(source,0,0)}else{ctx.drawImage(body,0,0);mesh(idx,indexMap,p.grip,[310,60,530,640]);mesh(thumb,thumbMap,p.grip,[0,535,270,925]);}ctx.restore();
+function poseAt(t){
+ const reach=smoother((t-.10)/.55),pull=smoother((t-.78)/.87);
+ const release=smooth((t-1.65)/.33),exit=smoother((t-1.68)/.50);
+ const grip=reach*(1-release*.72),scale=mix(S,.216,reach);
+ // Wrist roll and foreshortening carry the entire illustration into the grip.
+ const roll=reach*(16-9*pull)+16*exit,squeeze=1-.15*reach+.07*release;
+ const edge=mix(-12,PANEL.x+PANEL.width,pull);
+ const contact=indexMap(405,150,grip);
+ const transformed=rot([contact[0]*squeeze,contact[1]],roll);
+ const tx=mix(IX,-12-8-transformed[0]*scale,reach)+386*pull+180*exit;
+ const ty=mix(IY,PANEL.y+57-transformed[1]*scale,reach)-35*exit;
+ return {grip,scale,tx,ty,edge,reach,pull,release,exit,roll,squeeze};
+}
+function inHandSpace(c,p,paint){
+ c.save();c.translate(p.tx,p.ty);c.rotate(p.roll*Math.PI/180);
+ c.scale(p.scale*p.squeeze,p.scale);
+ c.beginPath();c.rect(-2000,-2000,5000,3515);c.clip();paint();c.restore();
+}
+function panelPath(c,p){c.beginPath();c.roundRect(p.edge-PANEL.width,PANEL.y,PANEL.width,PANEL.height,PANEL.radius)}
+const rear=document.createElement('canvas');rear.width=780;rear.height=920;
+const rearCtx=rear.getContext('2d');
+function drawPreview(p){
+ ctx.fillStyle='#303535';ctx.fillRect(0,0,W,H);ctx.strokeStyle='#4c5352';ctx.lineWidth=1;
+ const paths=[[-30,120,420,55],[-20,365,425,255],[20,-30,260,490],[225,-30,370,490],[-20,205,420,100],[65,-30,400,490]];
+ for(const l of paths){ctx.beginPath();ctx.moveTo(l[0],l[1]);ctx.lineTo(l[2],l[3]);ctx.stroke()}
+ if(state.t<=.78)return;
+ ctx.save();panelPath(ctx,p);ctx.fillStyle='#0e1011';ctx.fill();
+ ctx.strokeStyle='rgba(255,255,255,.14)';ctx.lineWidth=.75;ctx.stroke();ctx.clip();
+ const left=p.edge-PANEL.width;
+ ctx.fillStyle='#aaaeb0';ctx.font='500 13px system-ui';ctx.fillText('Listening',left+56,PANEL.y+40);
+ for(let i=0;i<4;i++){ctx.fillStyle='#ddd';ctx.fillRect(left+28+i*5,PANEL.y+29+(i%2)*3,2,12-(i%2)*6)}
+ ctx.fillStyle='#fff';ctx.font='500 32px system-ui';ctx.fillText('Where to?',left+28,PANEL.y+90);ctx.restore();
+}
+function draw(){
+ ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,780,920);if(!body)return;
+ const p=poseAt(state.t);ctx.scale(2,2);
+ if(window.PREVIEW)drawPreview(p);
+ if(state.t<.10){inHandSpace(ctx,p,()=>ctx.drawImage(source,0,0));return}
+ rearCtx.setTransform(1,0,0,1,0,0);rearCtx.clearRect(0,0,780,920);rearCtx.scale(2,2);
+ inHandSpace(rearCtx,p,()=>{
+  mesh(rearCtx,thumb,thumbMap,p.grip,[0,535,270,925]);
+  rearCtx.drawImage(body,0,0);
+ });
+ // The palm and thumb share the rear plane, so their joint cannot leak a
+ // sliver in front of the card. Only the gripping index crosses the front.
+ if(state.t>.78){rearCtx.save();rearCtx.globalCompositeOperation='destination-out';panelPath(rearCtx,p);rearCtx.fill();rearCtx.restore()}
+ ctx.drawImage(rear,0,0,W,H);
+ inHandSpace(ctx,p,()=>mesh(ctx,idx,indexMap,p.grip,[310,60,530,640]));
 }
 source.addEventListener('load',initialize,{once:true});if(source.complete&&source.naturalWidth)initialize();
 const tl=gsap.timeline({paused:true});tl.to(state,{t:2.3,duration:2.3,ease:'none',onUpdate:draw},0);tl.addLabel('grip',.65);tl.addLabel('pull',.78);tl.addLabel('release',1.65);window.__timelines['hand-pull']=tl;window.handPoseAt=poseAt;window.handDraw=draw;tl.seek(0);
