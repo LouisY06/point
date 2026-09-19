@@ -175,7 +175,7 @@ struct HandVoiceInteraction: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityFocused($transcriptFocused)
-                        .accessibilityLabel(prompt ?? transcript)
+                        .accessibilityLabel(prompt ?? (transcript.isEmpty ? "Where to?" : transcript))
                     Color.clear.frame(height: 1).id("utterance-end").accessibilityHidden(true)
                     }
                 }
