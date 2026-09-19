@@ -7,11 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		115482D7E5F5DD4631040DC7 /* hand-pull.mov in Resources */ = {isa = PBXBuildFile; fileRef = FA9C35A806594520C7C394DA /* hand-pull.mov */; };
+		166B3B41624CBEB2A38C9F35 /* HandVoiceInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF3A6F448576041F5D7D1616 /* HandVoiceInteraction.swift */; };
 		2BA19A178159EECDFC94F6F5 /* RouteMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D48E56DBA43D3ED3DE0BEC /* RouteMapView.swift */; };
+		66576C16C7901F6F4019BC2B /* DeviceSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADDFC6E6B5EC1873BD060CB7 /* DeviceSetupView.swift */; };
 		6887CDA3316BC22A1313B003 /* PointApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B855E70E6061ECCA92C0E9B5 /* PointApp.swift */; };
+		75F3FFB53E0E10C878E35B51 /* DeviceConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D9D3A79EA5677961D2F65B0 /* DeviceConnection.swift */; };
 		78227478E265F628353DF278 /* PointHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 502E38DB6BBE2F2B65D3A016 /* PointHomeView.swift */; };
 		8BEF968689523746A0E8DAFE /* PointTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B0D02EC547987D58B1A1878 /* PointTheme.swift */; };
 		BBDD7648D25953C3F5CDCA7B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 85B5ADE3ABD76CA57AB7D5C5 /* Assets.xcassets */; };
+		BFB4F057E9DBC376FC4E4A46 /* HandMotionPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5E999FC2AD8E110E41561BD /* HandMotionPlayer.swift */; };
 		C0C1A94F5B018A58AD4AF0DA /* PointCore in Frameworks */ = {isa = PBXBuildFile; productRef = 746FC08E4B10844B72888CC5 /* PointCore */; };
 		C5060DAEB29BA99B18732DC3 /* GoogleMaps in Frameworks */ = {isa = PBXBuildFile; productRef = 65FB13C42D9D6C992FCFD0D9 /* GoogleMaps */; };
 		C527F6FC6E384358F9872A2D /* PointViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4242BA39F321C6A7AFC0C442 /* PointViewModel.swift */; };
@@ -20,14 +25,19 @@
 
 /* Begin PBXFileReference section */
 		0B0D02EC547987D58B1A1878 /* PointTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointTheme.swift; sourceTree = "<group>"; };
+		0D9D3A79EA5677961D2F65B0 /* DeviceConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceConnection.swift; sourceTree = "<group>"; };
 		4242BA39F321C6A7AFC0C442 /* PointViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointViewModel.swift; sourceTree = "<group>"; };
-		44CB5A7C8262D0D8A5641262 /* Point.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Point.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		44CB5A7C8262D0D8A5641262 /* Point.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Point.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		502E38DB6BBE2F2B65D3A016 /* PointHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointHomeView.swift; sourceTree = "<group>"; };
 		85B5ADE3ABD76CA57AB7D5C5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		902411195D457116B06956C0 /* HackMIT */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HackMIT; path = .; sourceTree = SOURCE_ROOT; };
+		A5E999FC2AD8E110E41561BD /* HandMotionPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandMotionPlayer.swift; sourceTree = "<group>"; };
+		ADDFC6E6B5EC1873BD060CB7 /* DeviceSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSetupView.swift; sourceTree = "<group>"; };
+		AF3A6F448576041F5D7D1616 /* HandVoiceInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandVoiceInteraction.swift; sourceTree = "<group>"; };
 		B33CDC5FFA83E2341B8C55F6 /* GloveOutline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GloveOutline.swift; sourceTree = "<group>"; };
 		B855E70E6061ECCA92C0E9B5 /* PointApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointApp.swift; sourceTree = "<group>"; };
 		E5D48E56DBA43D3ED3DE0BEC /* RouteMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteMapView.swift; sourceTree = "<group>"; };
+		FA9C35A806594520C7C394DA /* hand-pull.mov */ = {isa = PBXFileReference; lastKnownFileType = video.quicktime; path = "hand-pull.mov"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -43,6 +53,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		05D59C96247D78C055BA9C23 /* HandMotion */ = {
+			isa = PBXGroup;
+			children = (
+				FA9C35A806594520C7C394DA /* hand-pull.mov */,
+			);
+			path = HandMotion;
+			sourceTree = "<group>";
+		};
 		4124EC47F676BDF70CB5C60E = {
 			isa = PBXGroup;
 			children = (
@@ -56,14 +74,27 @@
 			isa = PBXGroup;
 			children = (
 				85B5ADE3ABD76CA57AB7D5C5 /* Assets.xcassets */,
+				0D9D3A79EA5677961D2F65B0 /* DeviceConnection.swift */,
+				ADDFC6E6B5EC1873BD060CB7 /* DeviceSetupView.swift */,
 				B33CDC5FFA83E2341B8C55F6 /* GloveOutline.swift */,
+				A5E999FC2AD8E110E41561BD /* HandMotionPlayer.swift */,
+				AF3A6F448576041F5D7D1616 /* HandVoiceInteraction.swift */,
 				B855E70E6061ECCA92C0E9B5 /* PointApp.swift */,
 				502E38DB6BBE2F2B65D3A016 /* PointHomeView.swift */,
 				0B0D02EC547987D58B1A1878 /* PointTheme.swift */,
 				4242BA39F321C6A7AFC0C442 /* PointViewModel.swift */,
 				E5D48E56DBA43D3ED3DE0BEC /* RouteMapView.swift */,
+				A9488A6E75473B4A9E874A0A /* Resources */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		A9488A6E75473B4A9E874A0A /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				05D59C96247D78C055BA9C23 /* HandMotion */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		B5E1A6B588175D470A5DDC00 /* Packages */ = {
@@ -114,8 +145,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
-				TargetAttributes = {
-				};
 			};
 			buildConfigurationList = 5122EB488A1461890A7D064D /* Build configuration list for PBXProject "Point" */;
 			developmentRegion = en;
@@ -146,6 +175,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BBDD7648D25953C3F5CDCA7B /* Assets.xcassets in Resources */,
+				115482D7E5F5DD4631040DC7 /* hand-pull.mov in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -156,7 +186,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				75F3FFB53E0E10C878E35B51 /* DeviceConnection.swift in Sources */,
+				66576C16C7901F6F4019BC2B /* DeviceSetupView.swift in Sources */,
 				C9EEADD9F8F0F87605418583 /* GloveOutline.swift in Sources */,
+				BFB4F057E9DBC376FC4E4A46 /* HandMotionPlayer.swift in Sources */,
+				166B3B41624CBEB2A38C9F35 /* HandVoiceInteraction.swift in Sources */,
 				6887CDA3316BC22A1313B003 /* PointApp.swift in Sources */,
 				78227478E265F628353DF278 /* PointHomeView.swift in Sources */,
 				8BEF968689523746A0E8DAFE /* PointTheme.swift in Sources */,
@@ -174,7 +208,9 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = YSN2XT3872;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Connect to your Point device and verify its Bluetooth connection.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to your development voice and maps service.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Your location guides you toward the next point on your walking route.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Say where you want to go to search for a destination.";
@@ -199,7 +235,9 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = YSN2XT3872;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Connect to your Point device and verify its Bluetooth connection.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to your development voice and maps service.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Your location guides you toward the next point on your walking route.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Say where you want to go to search for a destination.";

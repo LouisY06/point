@@ -28,5 +28,9 @@ bring-up; pairing and command authentication belong in the production phase.
 
 From a phone, use a generic BLE application such as nRF Connect or LightBlue,
 connect to `BT Test C6`, enable notifications on Status, and write text to
-Command. The same GATT workflow can later be exercised directly by the mobile
-navigation application.
+Command.
+
+Point now supports this GATT workflow directly. On a physical iPhone, open the
+device setup icon, scan for `BT Test C6`, and select the board. The app enables
+notifications and verifies an echoed test command. See
+[Point device setup](../../docs/DEVICE_SETUP.md) for the complete bench procedure.

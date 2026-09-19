@@ -169,7 +169,9 @@ import UIKit
         stage = .recording
         work = Task {
             do {
-                try await Task.sleep(for: .milliseconds(420))
+                // Let the hand finish opening the speech surface before the sample starts.
+                // Live capture remains independent of the decorative movie.
+                try await Task.sleep(for: .milliseconds(2550))
                 for word in ["Take", "me", "to", "Shake", "Shack"] {
                     try Task.checkCancellation()
                     transcript += transcript.isEmpty ? word : " " + word

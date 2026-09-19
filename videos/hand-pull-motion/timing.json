@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "durationSeconds": 2.3,
+  "fps": 30,
+  "encodedSize": {"width": 780, "height": 920},
+  "logicalSize": {"width": 390, "height": 460},
+  "sourceSize": {"width": 930, "height": 1692},
+  "sourceWristClipY": 1515,
+  "idleImageRect": {"x": 95.0709219858, "y": 30, "width": 219.8581560284, "height": 400},
+  "reachAndPinch": {"start": 0.10, "end": 0.65},
+  "gripHold": {"start": 0.65, "end": 0.78},
+  "pull": {"start": 0.78, "end": 1.65, "edgeXStart": -10, "edgeXEnd": 410, "contactY": 205, "easing": "u=clamp((t-0.78)/0.87,0,1); p=u*u*(3-2*u); edgeX=-10+420*p"},
+  "releaseExit": {"start": 1.65, "end": 2.18},
+  "transparentTail": {"start": 2.18, "end": 2.30},
+  "contains": "hand only, no background, banner, text or audio",
+  "poster": "same source image, rendered to idleImageRect with source-space clipping at y=1515"
+}

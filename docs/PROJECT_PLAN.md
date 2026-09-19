@@ -2,6 +2,8 @@
 
 Baseline: September 19, 2026. This document separates code that exists today from integration work and future design work.
 
+Bluetooth update: the merged ESP32-C6 echo firmware now has a matching iOS device setup flow. Users can scan, connect, and verify a unique command/status round trip. This remains separate from navigation capabilities, which the firmware does not yet implement. See [device setup](DEVICE_SETUP.md) for the bench test; live board verification is pending.
+
 ## 1. Product and agreed scope
 
 Point is a camera-free walking-navigation app paired with a pointing glove. The user says where they want to go, confirms the destination, and points their hand toward the next geographic route beacon. A short vibration confirms correct pointing.
@@ -50,8 +52,8 @@ Separately, `swift run point-demo` drives the real feedback engine with simulate
 | Map | Google renderer when configured; Apple preview fallback; route line, markers, route framing and controls | Bind active beacon, updated route, rerouting, and arrival to live session state |
 | Navigation session | Start/pause/resume/stop, location quality checks, beacon advancement, arrival, off-route detection | Complete UI wiring and outdoor tuning |
 | Pointing feedback | True-north bearing comparison, uncertainty margin, dwell, hysteresis, stale-data rejection | Real sensor calibration and physical motor tuning |
-| Glove interface | Transport protocol, connection/capability/heading/gesture/battery events, finite haptic commands, simulator | CoreBluetooth adapter, agreed firmware packet format, real device |
-| Tests | 11 existing tests across route, feedback, and voice suites | BLE fixtures, service mocks, UI lifecycle and outdoor tests |
+| Glove interface | Navigation transport protocol and simulator; separate CoreBluetooth setup for the ESP32-C6 echo service | Physical board validation; sensor/haptic wire format and navigation adapter |
+| Tests | 16 tests across route, feedback, voice, and echo-protocol suites | Live BLE checks, service mocks, UI lifecycle and outdoor tests |
 | Distribution | Shared Xcode project and reproducible package manifest | Signing/team selection, backend, release configuration, background behavior |
 
 “Implemented” means code exists and can be built or exercised locally; it does not mean the complete live hardware flow has been tested.
@@ -106,6 +108,8 @@ flowchart TD
 | `App/PointHomeView.swift` | Home, transcript/loading states, background atmosphere, map reveal, route panel, destination/typing sheets |
 | `App/GloveOutline.swift` | Current native hand placeholder; replacement point for approved artwork |
 | `App/PointTheme.swift` | Brand and surface colors |
+| `App/DeviceConnection.swift`, `App/DeviceSetupView.swift` | BLE echo-service discovery, setup, verification, and recovery UI |
+| `Sources/PointCore/Device/BTTestProtocol.swift` | Firmware UUIDs, byte limits, and exact round-trip validation |
 | `App/PointViewModel.swift` | App flow, demo, live service calls, GPS delegate, app-to-core composition |
 | `App/RouteMapView.swift` | Google Maps bridge and Apple preview renderer |
 | `Sources/PointCore/Navigation/` | Existing route algorithm and new navigation lifecycle |
@@ -156,7 +160,7 @@ These are prototype defaults, not calibrated hardware specifications. The app sh
 
 ## 7. Hardware integration plan
 
-The working hardware shortlist from team brainstorming includes a compact XIAO ESP32-S3, BNO055/BNO085-class orientation sensor, coin/ERM motor with a DRV2605L driver, and finger flex or capacitive gesture sensors. Charging/protection modules, battery placement, antenna needs, and fallback indicators remain hardware-team decisions. Availability, exact board dimensions, power requirements, and sensor performance are not confirmed by this repository.
+The merged connection firmware now targets the XIAO ESP32-C6. The earlier hardware shortlist from team brainstorming included a compact XIAO ESP32-S3, BNO055/BNO085-class orientation sensor, coin/ERM motor with a DRV2605L driver, and finger flex or capacitive gesture sensors. Charging/protection modules, battery placement, antenna needs, and fallback indicators remain hardware-team decisions. Availability, exact board dimensions, power requirements, and sensor performance are not confirmed by this repository.
 
 The preferred form is electronics on the back of the hand and battery near the wrist, avoiding the palm and fingertips where practical. A belt attachment and learned gestures are future exploration.
 
@@ -241,7 +245,7 @@ Do not assume earlier challenge/prize discussion establishes eligibility. Before
 
 ## 12. Validation baseline and known gaps
 
-At handoff, the existing 11 core tests pass locally. They cover malformed polyline handling, turn preservation, Routes normalization, duplicate/inaccurate location rejection, route replacement, north wraparound/dwell, stale or uncalibrated heading, haptic limiting/stop, disconnect recovery, destination normalization/selection, and empty typed input.
+At initial handoff, the existing 11 core tests passed locally. The Bluetooth setup update adds five passing protocol tests, for 16 total. They cover malformed polyline handling, turn preservation, Routes normalization, duplicate/inaccurate location rejection, route replacement, north wraparound/dwell, stale or uncalibrated heading, haptic limiting/stop, disconnect recovery, destination normalization/selection, and empty typed input.
 
 The iOS simulator build and the home/route screens have also been checked. These checks do not establish physical-device BLE behavior, live provider account access, outdoor navigation accuracy, complete accessibility coverage, or locked-screen reliability.
 

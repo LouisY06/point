@@ -4,12 +4,14 @@ import SwiftUI
 
 struct PointHomeView: View {
     @StateObject private var model = PointViewModel()
+    @StateObject private var deviceConnection = DeviceConnection()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .largeTitle) private var titleSize = 36
     @State private var reveal: CGFloat = 0
     @State private var showTyping = false
+    @State private var showDeviceSetup = false
     @State private var typedDestination = ""
     @State private var voiceCenter = CGPoint.zero
     @FocusState private var typingFocused: Bool
@@ -22,7 +24,7 @@ struct PointHomeView: View {
         GeometryReader { geometry in
             ZStack {
                 PointTheme.background.ignoresSafeArea()
-                HomeMapBackdrop(isActive: model.stage != .route && !showTyping && model.stage != .choosing)
+                HomeMapBackdrop(isActive: model.stage != .route && !showTyping && !showDeviceSetup && model.stage != .choosing)
                     .ignoresSafeArea().opacity(1 - reveal)
                 home(geometry: geometry)
                     .scaleEffect(reduceMotion ? 1 : 1 + reveal * 0.42, anchor: .init(x: 0.54, y: 0.6))
@@ -52,14 +54,19 @@ struct PointHomeView: View {
                 reveal = stage == .route ? 1 : 0
             }
         }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { model.sceneInactive() } }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { model.sceneInactive() }
+            if phase == .background { deviceConnection.enteredBackground() }
+        }
         .sheet(isPresented: $showTyping) { typingSheet }
+        .sheet(isPresented: $showDeviceSetup) { DeviceSetupView(connection: deviceConnection) }
         .sheet(isPresented: Binding(get: { model.stage == .choosing }, set: { if !$0 && model.stage == .choosing { model.stage = .home } })) { destinationSheet }
         .alert("One moment", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
             Button("OK", role: .cancel) { model.message = nil }
         } message: { Text(model.message ?? "") }
         .onAppear {
             if ProcessInfo.processInfo.arguments.contains("--preview-route") { model.preview() }
+            if ProcessInfo.processInfo.arguments.contains("--device-setup") { showDeviceSetup = true }
         }
     }
 
@@ -69,75 +76,38 @@ struct PointHomeView: View {
                 HStack(alignment: .center) {
                     wordmark
                     Spacer()
-                    Image(systemName: "hand.raised.slash")
-                        .font(.body).foregroundStyle(.secondary)
-                        .frame(width: 44, height: 44)
-                        .accessibilityLabel("Glove not connected")
+                    deviceSetupButton
                 }
                 .padding(.top, 14)
+                .padding(.horizontal, 28)
 
                 VStack(alignment: .center, spacing: 12) {
-                    Text(recording ? "Listening." : searching ? "Finding your way." : "Where to?")
+                    Text("Where to?")
                         .font(.system(size: titleSize, weight: .medium, design: .default))
                         .tracking(-0.7)
                         .fixedSize(horizontal: false, vertical: true)
                         .contentTransition(.opacity)
                         .accessibilityAddTraits(.isHeader)
+                        .opacity(model.stage == .home ? 1 : 0)
+                        .accessibilityHidden(model.stage != .home)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.top, 66)
+                .padding(.top, 36)
 
-                let width = min(geometry.size.width - 56, 290)
-                ZStack {
-                    GloveOutline()
-                        .frame(width: width * 0.66, height: width * 0.88)
-                        .offset(x: 10)
-                        .accessibilityHidden(true)
-                    voiceButton(size: 56)
-                        .position(x: width * 0.49, y: width * 0.66)
-                        .background {
-                            GeometryReader { proxy in
-                                Color.clear.preference(key: VoiceCenterKey.self,
-                                    value: CGPoint(x: proxy.frame(in: .named("screen")).minX + width * 0.49,
-                                                   y: proxy.frame(in: .named("screen")).minY + width * 0.66))
-                            }
-                        }
-                }
-                .frame(width: width, height: width)
-                .padding(.top, 42)
-                .onPreferenceChange(VoiceCenterKey.self) { if model.stage != .route { voiceCenter = $0 } }
-
-                Text(model.demoInFlight ? (model.transcript.isEmpty ? "Say a destination" : "“" + model.transcript + "”") : recording ? "Tap to finish" : searching ? "Finding a place…" : "Tap to speak")
-                    .font(.subheadline.weight(.medium))
-                    .contentTransition(.opacity)
-                    .animation(.easeOut(duration: 0.16), value: model.transcript)
-                    .padding(.top, 14)
-
-                HStack(spacing: 10) {
-                    Button { showTyping = true } label: {
-                        Image(systemName: "keyboard").font(.title3).foregroundStyle(Color.white.opacity(0.68))
-                            .frame(width: 48)
-                            .frame(minHeight: 48)
-                    }
-                    .accessibilityLabel("Type a destination instead")
-                    if recording || searching {
-                        Button("Cancel", role: .cancel) { model.cancel() }.frame(minHeight: 48)
-                    }
-                }
-                .padding(.top, 8)
-
-                Button { model.preview() } label: {
-                    HStack(spacing: 7) {
-                        Text("Preview")
-                        Image(systemName: "play")
-                    }
-                    .font(.caption).foregroundStyle(Color.white.opacity(0.68)).frame(minHeight: 48)
-                }
-                .accessibilityLabel("Preview a sample walk to Shake Shack")
-                .padding(.top, 30)
-                .padding(.bottom, 20)
+                HandVoiceInteraction(
+                    active: model.stage != .home,
+                    listening: recording,
+                    searching: searching,
+                    transcript: model.transcript,
+                    isDemo: model.isDemo,
+                    onSpeak: { model.microphone() },
+                    onFinish: { model.microphone() },
+                    onCancel: { model.cancel() },
+                    onType: { model.cancel(); showTyping = true },
+                    onVoiceCenter: { if model.stage != .route { voiceCenter = $0 } }
+                )
+                .padding(.top, 16)
             }
-            .padding(.horizontal, 28)
             .frame(maxWidth: 520)
             .frame(maxWidth: .infinity)
         }
@@ -152,24 +122,13 @@ struct PointHomeView: View {
         .accessibilityElement(children: .ignore).accessibilityLabel("Point")
     }
 
-    private func voiceButton(size: CGFloat) -> some View {
-        Button { model.microphone() } label: {
-            ZStack {
-                if searching {
-                    RouteLoadingGlyph(reduceMotion: reduceMotion).frame(width: 30, height: 30)
-                } else if recording {
-                    VoiceWaveform(reduceMotion: reduceMotion).frame(width: 30, height: 28)
-                } else {
-                    Image(systemName: "mic.fill").font(.system(size: 28, weight: .regular)).foregroundStyle(.white)
-                }
-            }
-            .frame(width: size, height: size)
-            .contentShape(Rectangle())
+    private var deviceSetupButton: some View {
+        Button { if recording || searching { model.cancel() }; showDeviceSetup = true } label: {
+            Image(systemName: deviceConnection.isConnected ? "antenna.radiowaves.left.and.right" : "hand.raised.slash")
+                .font(.body).foregroundStyle(.primary)
+                .frame(width: 48, height: 48)
         }
-        .buttonStyle(PressStyle())
-        .disabled(searching || model.demoInFlight)
-        .accessibilityLabel(recording ? "Finish recording destination" : "Speak a destination")
-        .accessibilityHint("For example, take me to Shake Shack")
+        .accessibilityLabel(deviceConnection.isConnected ? "Device connected. Open device setup" : "Connect device. Open device setup")
     }
 
     private var routeControls: some View {
@@ -181,6 +140,8 @@ struct PointHomeView: View {
                 }
                 .accessibilityLabel("Back to voice search")
                 Spacer()
+                deviceSetupButton
+                    .background(PointTheme.background, in: Circle())
                 Text(model.isDemo ? "Preview" : "Walking")
                     .font(.subheadline.weight(.medium))
                     .padding(.horizontal, 16).padding(.vertical, 12)
@@ -203,7 +164,7 @@ struct PointHomeView: View {
                 }
                 Divider()
                 if model.journeyStarted {
-                    Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : "Connect your glove to feel direction",
+                    Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : deviceConnection.isConnected ? "Device linked · Direction feedback not available yet" : "Connect your glove to feel direction",
                           systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
                         .font(.subheadline.weight(.medium))
                     if model.isDemo {
@@ -225,7 +186,7 @@ struct PointHomeView: View {
                         }.accessibilityLabel("Change destination")
                     }
                 }
-                Text(model.isDemo ? "Sample route · Simulated glove" : "Glove not connected")
+                Text(model.isDemo ? "Sample route · Simulated glove" : deviceConnection.isConnected ? "Bluetooth verified · Sensor firmware pending" : "Glove not connected")
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
             }

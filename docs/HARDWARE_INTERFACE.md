@@ -1,6 +1,8 @@
 # Hardware boundary — draft
 
-The hardware team owns the board, sensors, wiring, firmware and motor. The app only needs a small semantic interface, regardless of whether the final controller is a XIAO ESP32-S3 or another BLE board.
+The hardware team owns the board, sensors, wiring, firmware and motor. The current connection prototype uses the XIAO ESP32-C6 and lives in `Firmware/BTTest`. Point can discover its service, connect, subscribe to replies, and verify a unique echoed message. See [device setup](DEVICE_SETUP.md) for the physical-iPhone test procedure.
+
+The echo link is separate from the navigation interface below. Its firmware does not yet provide heading, gestures, battery, or motor control; successful connection verification does not imply those capabilities exist.
 
 ## Glove → phone
 
@@ -14,7 +16,7 @@ The hardware team owns the board, sensors, wiring, firmware and motor. The app o
 
 The adapter must convert board axes, mounting orientation, handedness and sensor reference into the agreed pointing frame. Raw gyro yaw alone is not an absolute heading. Magnetic-north readings need a known conversion before use. Phone GPS supplies position; phone orientation does not describe the glove.
 
-BLE packet timestamps need translation to a phone clock, or bounded latency/age information. Simply assigning an old buffered packet a fresh receipt timestamp is not sufficient. Service UUIDs, characteristics, frequency, encoding, acknowledgements and sequence IDs remain to be agreed; no fabricated hardware UUIDs are committed.
+BLE packet timestamps need translation to a phone clock, or bounded latency/age information. Simply assigning an old buffered packet a fresh receipt timestamp is not sufficient. The echo service UUIDs are implemented and documented in the firmware. The navigation service's characteristics, frequency, encoding, acknowledgements and sequence IDs remain to be agreed.
 
 ## Phone → glove
 

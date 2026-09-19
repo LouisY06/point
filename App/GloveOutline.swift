@@ -1,13 +1,17 @@
 import SwiftUI
-import UIKit
-
-/// Use Apple's carefully proportioned outline rather than an improvised hand drawing.
+/// The approved drawing includes its microphone. HandBackup retains the previous version.
 struct GloveOutline: View {
-    private let image = UIImage(systemName: "hand.raised", withConfiguration:
-        UIImage.SymbolConfiguration(pointSize: 240, weight: .ultraLight))!
     var body: some View {
-        Image(uiImage: image).renderingMode(.template).resizable().scaledToFit()
-            .foregroundStyle(.primary.opacity(0.9))
+        Image("HandPreferred").resizable().scaledToFit()
+            .clipShape(FlatWristCut())
             .accessibilityHidden(true)
+    }
+}
+
+/// Cut in source coordinates without redrawing, recentering, or scaling the art.
+private struct FlatWristCut: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path(CGRect(x: rect.minX, y: rect.minY, width: rect.width,
+                    height: rect.height * 1515 / 1692))
     }
 }

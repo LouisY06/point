@@ -28,6 +28,12 @@ swift run point-demo
 
 `PointCore` is a local Swift package, usable on iOS 17+ and macOS 14+. The app links Google Maps iOS SDK 10.8.0. Until its key is configured, the UI uses an Apple map preview.
 
+## Device connection
+
+The ESP32-C6 firmware and app now share a Bluetooth connection test. On a physical iPhone, open the device icon at the top right, scan for **BT Test C6**, select it, and wait for **Connection verified**. This checks a real write/notification round trip; the firmware does not yet expose sensors or control vibration. The simulator can preview the setup screen but cannot perform this hardware test.
+
+See [device setup and troubleshooting](docs/DEVICE_SETUP.md) and [firmware build instructions](Firmware/BTTest/README.md). No provider API keys are needed for the connection test.
+
 ## Live development configuration
 
 In your **local, unshared** Xcode run scheme, set:
@@ -46,7 +52,8 @@ Provider keys are never committed. Direct credential injection is **Debug-only**
 ## Current scope
 
 - Implemented: native UI, outline-to-map transition, recording, transcription and Google REST clients, destination selection, route parsing, checkpoint/beacon generation, pointing feedback, simulated transport, and core tests.
-- Hardware integration pending: BLE service/characteristic IDs, packet format, heading calibration and physical motor tuning. `GloveTransport` is the replacement boundary; the app does not claim a real glove is connected.
+- Bluetooth bring-up implemented: ESP32-C6 echo firmware, device discovery/setup, notification subscription, round-trip verification, disconnect and retry. Live iPhone-to-board verification is still pending.
+- Navigation hardware integration pending: sensor/haptic protocol, heading calibration and physical motor tuning. `GloveTransport` is the replacement boundary; echo-link verification does not imply working glove guidance.
 - Real locked-screen/background navigation, on-device microphone interruption handling, and outdoor navigation accuracy still require device testing and further integration.
 - No cameras, computer vision, glasses SDK, room scans, streaming, old dashboard, or rehab workflow were copied.
 
