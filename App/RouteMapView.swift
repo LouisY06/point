@@ -21,32 +21,37 @@ import SwiftUI
 /// Geometry is created once per route identity, never for a compass update. For a transit
 /// journey the active walking leg is the route; other legs are drawn once as context.
 private final class RouteMapDrawing: ObservableObject {
-    struct Ride { let routeID: String; let polyline: MKPolyline; let color: Color; let isBus: Bool; let board: TransitStation; let alight: TransitStation; let isPassed: Bool }
+    struct Ride { let routeID: String; let polyline: MKPolyline; let color: Color; let isBus: Bool; let board: TransitStation; let alight: TransitStation; let isPassed: Bool; let boardedByWalk: Bool }
+    /// A walking leg other than the active one: drawn with its beacons, faded once passed.
+    struct Walk { let polyline: MKPolyline; let beacons: [PingTarget]; let isPassed: Bool; let boardGlyph: String }
     let polyline: MKPolyline
-    let otherWalks: [(MKPolyline, Bool)]
+    let otherWalks: [Walk]
     let rides: [Ride]
     let region: MKCoordinateRegion
 
     init(route: RoutePlan, journey: JourneyPlan?, legIndex: Int?) {
         let coordinates = route.checkpoints.map(\.coordinate)
         polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
-        var walks: [(MKPolyline, Bool)] = []
+        var walks: [Walk] = []
         var rides: [Ride] = []
         var rect = polyline.boundingMapRect
         if let journey {
             for (index, leg) in journey.legs.enumerated() {
                 let passed = legIndex.map { index < $0 } ?? false
+                let nextRide: RideLeg? = journey.legs.indices.contains(index + 1) ? { if case .ride(let r) = journey.legs[index + 1] { return r } else { return nil } }() : nil
+                let previousIsWalk: Bool = index > 0 ? { if case .walk = journey.legs[index - 1] { return true } else { return false } }() : false
                 switch leg {
                 case .walk(let plan) where plan.id != route.id:
                     let points = plan.checkpoints.map(\.coordinate)
                     let line = MKPolyline(coordinates: points, count: points.count)
-                    walks.append((line, passed))
+                    walks.append(Walk(polyline: line, beacons: plan.beacons, isPassed: passed,
+                                      boardGlyph: nextRide?.route.isBus == true ? "bus.fill" : "tram.fill"))
                     rect = rect.union(line.boundingMapRect)
                 case .ride(let ride):
                     let line = MKPolyline(coordinates: ride.path, count: ride.path.count)
                     // Subway lines keep their MBTA colours; buses use one calm slate blue instead of MBTA yellow.
                     rides.append(Ride(routeID: ride.route.id, polyline: line, color: ride.route.isBus ? Color(red: 0.29, green: 0.44, blue: 0.65) : Color(hex: ride.route.colorHex), isBus: ride.route.isBus,
-                                      board: ride.board, alight: ride.alight, isPassed: passed))
+                                      board: ride.board, alight: ride.alight, isPassed: passed, boardedByWalk: previousIsWalk))
                     rect = rect.union(line.boundingMapRect)
                 default: break
                 }
@@ -55,9 +60,11 @@ private final class RouteMapDrawing: ObservableObject {
         otherWalks = walks
         self.rides = rides
         let bounds = MKCoordinateRegion(rect)
+        // A whole journey is wide already; pad modestly so a transfer trip is not framed at city scale.
+        let pad = journey == nil ? (1.8, 2.2) : (1.25, 1.3)
         region = MKCoordinateRegion(center: bounds.center,
-                                    span: .init(latitudeDelta: min(170, max(0.003, bounds.span.latitudeDelta * 1.8)),
-                                                longitudeDelta: min(360, max(0.004, bounds.span.longitudeDelta * 2.2))))
+                                    span: .init(latitudeDelta: min(170, max(0.003, bounds.span.latitudeDelta * pad.0)),
+                                                longitudeDelta: min(360, max(0.004, bounds.span.longitudeDelta * pad.1))))
     }
 }
 
@@ -83,14 +90,6 @@ struct RouteMapView: View {
         _drawing = StateObject(wrappedValue: RouteMapDrawing(route: route, journey: journey, legIndex: journeyLegIndex))
     }
 
-    /// The ride whose stop the active walking leg's own beacon already marks (the leg right after it).
-    private var rideBoardedByRoute: RideLeg? {
-        guard let journey, route.beacons.last?.kind == .boardStop,
-              let index = journey.legs.firstIndex(where: { if case .walk(let plan) = $0 { return plan.id == route.id } else { return false } }),
-              journey.legs.indices.contains(index + 1), case .ride(let ride) = journey.legs[index + 1] else { return nil }
-        return ride
-    }
-
     /// The vehicle glyph for the stop this walking leg ends on.
     private var boardGlyph: String {
         guard let journey, let index = journeyLegIndex ?? 0 as Int?, journey.legs.indices.contains(index + 1),
@@ -105,15 +104,28 @@ struct RouteMapView: View {
                     PhoneDirectionAnnotation(heading: telemetry.heading, location: location, mapHeading: mapHeading)
                 }
             } else { UserAnnotation() }
-            ForEach(Array(drawing.otherWalks.enumerated()), id: \.offset) { _, walk in
-                MapPolyline(walk.0).stroke(PointTheme.route.opacity(walk.1 ? 0.35 : 0.6), lineWidth: 4)
+            // Every other walking leg, with its beacons in the normal style, faded once passed.
+            ForEach(Array(drawing.otherWalks.enumerated()), id: \.offset) { walkIndex, walk in
+                MapPolyline(walk.polyline).stroke(.white.opacity(walk.isPassed ? 0.3 : 0.8), lineWidth: 8)
+                MapPolyline(walk.polyline).stroke(PointTheme.route.opacity(walk.isPassed ? 0.35 : 0.9), lineWidth: 4)
+                ForEach(Array(walk.beacons.enumerated()), id: \.offset) { beaconIndex, beacon in
+                    let isBoard = beacon.kind == .boardStop
+                    Annotation(beacon.isFinalDestination ? (isBoard ? "" : route.destinationName) : "", coordinate: beacon.coordinate) {
+                        Image(systemName: isBoard ? walk.boardGlyph : beacon.isFinalDestination ? "mappin" : "circle.fill")
+                            .font(beacon.isFinalDestination ? .title2.bold() : .caption2)
+                            .foregroundStyle(.white)
+                            .padding(beacon.isFinalDestination ? 12 : 5)
+                            .background((isBoard ? Color.green : PointTheme.accent).opacity(walk.isPassed ? 0.45 : 1), in: Circle())
+                            .accessibilityLabel(isBoard ? "Stop to get on" : beacon.isFinalDestination ? "Destination" : "Beacon \(beaconIndex + 1) of walking leg \(walkIndex + 1)")
+                    }
+                }
             }
             // A ride is a solid line in its own colour with no beacons along it: green where you get
             // on, red where you get off. Solid, not dashed: dash patterns redraw visibly on map updates.
             ForEach(Array(drawing.rides.enumerated()), id: \.offset) { _, ride in
                 MapPolyline(ride.polyline).stroke(.white.opacity(ride.isPassed ? 0.4 : 0.9), lineWidth: 8)
                 MapPolyline(ride.polyline).stroke(ride.color.opacity(ride.isPassed ? 0.45 : 1), lineWidth: 5)
-                if rideBoardedByRoute.map({ $0.board.id != ride.board.id || $0.route.id != ride.routeID }) ?? true {
+                if !ride.boardedByWalk {
                     Annotation(ride.board.name, coordinate: ride.board.coordinate, anchor: .bottom) {
                         StopBeacon(color: .green, glyph: ride.isBus ? "bus.fill" : "tram.fill", passed: ride.isPassed,
                                    label: "Get on the \(ride.isBus ? "bus" : "train") at \(ride.board.name)")

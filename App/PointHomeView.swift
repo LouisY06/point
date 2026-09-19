@@ -9,7 +9,15 @@ struct PointHomeView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .largeTitle) private var titleSize = 36
-    @State private var routePanelHeight: CGFloat = 300
+    @State private var panelCollapsed = false
+    @State private var panelDrag: CGFloat = 0
+    @State private var panelFullHeight: CGFloat = 300
+    @State private var panelHeaderHeight: CGFloat = 200
+
+    /// The sheet's content never changes; only how much of it is visible does. The finger changes
+    /// the height live, release springs to header-only or full, and the map inset follows.
+    private var panelSnappedHeight: CGFloat { panelCollapsed ? panelHeaderHeight : panelFullHeight }
+    private var panelVisibleHeight: CGFloat { min(panelFullHeight, max(panelHeaderHeight, panelSnappedHeight - panelDrag)) }
     @State private var reveal: CGFloat = 0
     @State private var showTyping = false
     @State private var showDeviceSetup = false
@@ -39,14 +47,18 @@ struct PointHomeView: View {
                                  phoneLocation: model.currentLocation, telemetry: model.mapTelemetry,
                                  journey: model.journeyPlan, journeyLegIndex: model.journeyPhase.legIndex)
                         .id(route.id)
-                        .padding(.bottom, routePanelHeight)
+                        // The map fills the screen under the sheet; only its content (camera framing,
+                        // attribution) is inset by the sheet's height. Dragging the sheet reveals map,
+                        // never background, and the map view itself never resizes per frame.
+                        .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: panelSnappedHeight) }
+                        .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: geometry.safeAreaInsets.top + 72) } // status bar + controls row
                         .ignoresSafeArea()
                         .scaleEffect(reduceMotion ? 1 : 1.12 - reveal * 0.12)
                         .mask {
                             if reduceMotion { Rectangle().opacity(reveal) }
                             else { PortalReveal(progress: reveal, origin: voiceCenter == .zero ? CGPoint(x: geometry.size.width * 0.49, y: geometry.size.height * 0.6) : voiceCenter) }
                         }
-                    routeControls
+                    routeControls(maxPanelHeight: geometry.size.height * 0.62, bottomInset: geometry.safeAreaInsets.bottom)
                         .opacity(reveal)
                         .offset(y: reduceMotion ? 0 : 18 * (1 - reveal))
                 }
@@ -55,6 +67,7 @@ struct PointHomeView: View {
         }
         .tint(PointTheme.action)
         .onChange(of: model.stage) { _, stage in
+            if stage != .route { panelCollapsed = false; panelDrag = 0 }
             withAnimation(reduceMotion ? .easeOut(duration: 0.18) : transitionAnimation) {
                 reveal = stage == .route ? 1 : 0
             }
@@ -64,7 +77,6 @@ struct PointHomeView: View {
             if phase != .active { model.sceneInactive() }
             if phase == .background { deviceConnection.enteredBackground() }
         }
-        .onPreferenceChange(RoutePanelHeightKey.self) { routePanelHeight = $0 }
         .onChange(of: showDeviceSetup) { _, shown in if shown { model.pauseJourney() } }
         .sheet(isPresented: $showTyping) { typingSheet }
         .sheet(isPresented: $showDeviceSetup) { DeviceSetupView(connection: deviceConnection) }
@@ -181,7 +193,7 @@ struct PointHomeView: View {
         .accessibilityLabel(deviceConnection.isConnected ? "Device connected. Open device setup" : "Connect device. Open device setup")
     }
 
-    private var routeControls: some View {
+    private func routeControls(maxPanelHeight: CGFloat, bottomInset: CGFloat) -> some View {
         VStack {
             HStack {
                 Button { model.cancel() } label: {
@@ -199,48 +211,91 @@ struct PointHomeView: View {
             }
             .padding(.horizontal, 24).padding(.top, 12)
             Spacer()
-            VStack(alignment: .leading, spacing: 18) {
+            routeSheet(maxPanelHeight: maxPanelHeight, bottomInset: bottomInset)
+        }
+        // The container owns the bottom safe area; the sheet pads for it explicitly, so the
+        // sheet's measured frame is exactly its content and the map can sit flush against it.
+        .ignoresSafeArea(edges: .bottom)
+    }
+
+    /// A bottom sheet that follows the finger. The header (grabber, destination, current action) is
+    /// always visible; dragging slides the details below it off screen. Release snaps open or closed
+    /// from position and velocity. The map's bottom padding tracks the live offset.
+    private func routeSheet(maxPanelHeight _: CGFloat, bottomInset: CGFloat) -> some View {
+        let drag = DragGesture(minimumDistance: 6, coordinateSpace: .global)
+            .onChanged { value in panelDrag = value.translation.height }
+            .onEnded { value in
+                // Snap to whichever state the projected height is nearer.
+                let projected = panelSnappedHeight - value.predictedEndTranslation.height
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                    panelCollapsed = projected < (panelHeaderHeight + panelFullHeight) / 2
+                    panelDrag = 0
+                }
+            }
+        return VStack(alignment: .leading, spacing: 0) {
+            // Header: what needs a hand right now.
+            VStack(alignment: .leading, spacing: 14) {
+                Capsule().fill(.secondary.opacity(0.5)).frame(width: 40, height: 5).frame(maxWidth: .infinity)
+                    .padding(.top, 8)
+                    .accessibilityLabel(panelCollapsed ? "Expand details" : "Collapse details")
+                    .accessibilityAddTraits(.isButton)
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 7) {
                         Text(model.selectedPlace?.name ?? "Destination")
                             .font(.title.weight(.semibold)).tracking(-0.7)
                             .accessibilityAddTraits(.isHeader)
                         Text(model.selectedPlace?.address ?? "")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
                     Spacer(minLength: 12)
                     Image(systemName: "location.north.circle")
                         .font(.largeTitle).foregroundStyle(PointTheme.action)
                         .accessibilityHidden(true)
                 }
-                if model.journeyPlan != nil { journeyLegs }
-                Divider()
                 if model.journeyStarted, model.journeyPlan != nil { journeyControls }
-                if model.journeyStarted {
-                    if !model.isDemo, model.usePhoneAsGlove, model.journeyPlan == nil || (model.isWalkingLeg && !model.awaitingSignal) {
-                        PhonePointingStatusView(tester: model.phoneTester, beaconIndex: model.activeBeaconIndex,
-                                                beaconCount: model.route?.beacons.count ?? 0, arrived: model.journeyState == .arrived)
-                        Button("Test vibration") { model.phoneTester.testVibration() }
-                            .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
-                        if model.journeyState != .arrived, model.journeyPlan == nil {
-                            Button(model.journeyState == .paused ? "Resume pointing" : "Pause pointing") {
-                                if model.journeyState == .paused { model.resumeJourney() }
-                                else { model.pauseJourney() }
+                else if model.journeyStarted, !model.isDemo, model.usePhoneAsGlove { Text(model.phoneTester.status).font(.subheadline.weight(.medium)) }
+                else if !model.journeyStarted { startRow }
+            }
+            .padding(.horizontal, 26).padding(.top, 10).padding(.bottom, 18)
+            .background {
+                GeometryReader { g in
+                    Color.clear
+                        .onAppear { panelHeaderHeight = g.size.height + bottomInset }
+                        .onChange(of: g.size.height) { _, height in panelHeaderHeight = height + bottomInset }
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) { panelCollapsed.toggle() } }
+            .gesture(drag)
+
+            // Details: always in the tree; the sheet's visible height decides how much shows.
+            VStack(alignment: .leading, spacing: 18) {
+                    if model.journeyPlan != nil { journeyLegs }
+                    Divider()
+                    if model.journeyStarted {
+                        if !model.isDemo, model.usePhoneAsGlove, model.journeyPlan == nil || (model.isWalkingLeg && !model.awaitingSignal) {
+                            PhonePointingStatusView(tester: model.phoneTester, beaconIndex: model.activeBeaconIndex,
+                                                    beaconCount: model.route?.beacons.count ?? 0, arrived: model.journeyState == .arrived)
+                            Button("Test vibration") { model.phoneTester.testVibration() }
+                                .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
+                            if model.journeyState != .arrived, model.journeyPlan == nil {
+                                Button(model.journeyState == .paused ? "Resume pointing" : "Pause pointing") {
+                                    if model.journeyState == .paused { model.resumeJourney() }
+                                    else { model.pauseJourney() }
+                                }
+                                .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
                             }
-                            .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+                        } else if model.journeyPlan == nil {
+                            Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : "Glove direction feedback is not available yet",
+                                  systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
+                                .font(.subheadline.weight(.medium))
                         }
-                    } else if model.journeyPlan == nil {
-                        Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : "Glove direction feedback is not available yet",
-                              systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
-                            .font(.subheadline.weight(.medium))
-                    }
-                    if model.isDemo {
-                        Toggle("Simulate correct pointing", isOn: Binding(get: { model.pointingAligned }, set: { model.setDemoAlignment($0) }))
-                            .font(.subheadline)
-                    }
-                    Button(model.journeyPlan != nil ? "End trip" : "End walk") { model.cancel() }.font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
-                } else {
-                    if !model.isDemo {
+                        if model.isDemo {
+                            Toggle("Simulate correct pointing", isOn: Binding(get: { model.pointingAligned }, set: { model.setDemoAlignment($0) }))
+                                .font(.subheadline)
+                        }
+                        Button(model.journeyPlan != nil ? "End trip" : "End walk") { model.cancel() }.font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
+                    } else if !model.isDemo {
                         Toggle("Phone vibration guidance", isOn: $model.usePhoneAsGlove)
                             .font(.subheadline.weight(.medium))
                         if model.usePhoneAsGlove {
@@ -249,30 +304,40 @@ struct PointHomeView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    HStack(spacing: 16) {
-                        Button { model.startJourney() } label: {
-                            HStack { Text(model.isDemo ? "Try the walk" : model.journeyPlan != nil ? "Start trip" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right").accessibilityHidden(true) }
-                                .font(.body.weight(.semibold)).padding(.horizontal, 20).frame(minHeight: 54)
-                                .foregroundStyle(.white).background(PointTheme.accent, in: Capsule())
-                        }
-                        .buttonStyle(PressStyle())
-                        Button { model.cancel(); showTyping = true } label: {
-                            Image(systemName: "magnifyingglass").font(.title3).frame(width: 54, height: 54)
-                                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
-                        }.accessibilityLabel("Change destination")
-                    }
-                }
-                Text(model.isDemo ? "Sample route · Simulated glove" : model.usePhoneAsGlove ? "Route tracks while locked · Unlock for phone vibration" : deviceConnection.isConnected ? "Bluetooth verified · Sensor firmware pending" : "Glove not connected")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
+                    Text(model.isDemo ? "Sample route · Simulated glove" : model.usePhoneAsGlove ? "Route tracks while locked · Unlock for phone vibration" : deviceConnection.isConnected ? "Bluetooth verified · Sensor firmware pending" : "Glove not connected")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
             }
-            .padding(26)
-            .background(PointTheme.background)
-            .background {
-                GeometryReader { geometry in
-                    Color.clear.preference(key: RoutePanelHeightKey.self, value: geometry.size.height)
-                }
+            .padding(.horizontal, 26)
+            .padding(.bottom, bottomInset + 2) // Clear of the home indicator; nothing extra.
+        }
+        // Natural (full) height: fixedSize makes the content report its ideal height even though the
+        // frame below clips it; measured directly, since a preference did not survive the Map.
+        .fixedSize(horizontal: false, vertical: true)
+        .background {
+            GeometryReader { g in
+                Color.clear
+                    .onAppear { panelFullHeight = g.size.height }
+                    .onChange(of: g.size.height) { _, height in panelFullHeight = height }
             }
+        }
+        .frame(height: panelVisibleHeight, alignment: .top)
+        .clipped()
+        .background(PointTheme.background)
+    }
+
+    private var startRow: some View {
+        HStack(spacing: 16) {
+            Button { model.startJourney() } label: {
+                HStack { Text(model.isDemo ? "Try the walk" : model.journeyPlan != nil ? "Start trip" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right").accessibilityHidden(true) }
+                    .font(.body.weight(.semibold)).padding(.horizontal, 20).frame(minHeight: 54)
+                    .foregroundStyle(.white).background(PointTheme.accent, in: Capsule())
+            }
+            .buttonStyle(PressStyle())
+            Button { model.cancel(); showTyping = true } label: {
+                Image(systemName: "magnifyingglass").font(.title3).frame(width: 54, height: 54)
+                    .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+            }.accessibilityLabel("Change destination")
         }
     }
 
@@ -358,7 +423,7 @@ struct PointHomeView: View {
     private var journeySheet: some View {
         NavigationStack {
             List {
-                Section { Text(model.transcript).foregroundStyle(.secondary) }
+                if !model.transcript.isEmpty { Section { Text(model.transcript).foregroundStyle(.secondary) } }
                 ForEach(model.journeyCandidates) { plan in
                     Button { model.selectJourney(plan) } label: {
                         VStack(alignment: .leading, spacing: 8) {
@@ -575,7 +640,3 @@ private struct RouteLoadingGlyph: View {
     }
 }
 
-private struct RoutePanelHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 300
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
