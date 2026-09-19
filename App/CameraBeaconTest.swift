@@ -297,6 +297,9 @@ struct CameraBeaconTestView: View {
         }
         .tint(PointTheme.action)
         .task { await model.requestCamera() }
+        .onChange(of: model.message) { _, message in
+            UIAccessibility.post(notification: .announcement, argument: message)
+        }
         .onDisappear { vibrationTest.stop(); model.close() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.resume() } else { vibrationTest.stop(); model.suspend() }
