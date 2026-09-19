@@ -29,11 +29,19 @@ struct PhonePointingStatusView: View {
                 }
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(spokenDistance(distance, error: tester.angularErrorDegrees))
             }
             if let accuracy = tester.accuracyNote {
                 Text(accuracy).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func spokenDistance(_ distance: Double, error: Double?) -> String {
+        let meters = "Next beacon \(Int(distance.rounded())) meters away"
+        guard let error else { return meters }
+        return "\(meters), pointing \(Int(abs(error).rounded())) degrees off"
     }
 }
