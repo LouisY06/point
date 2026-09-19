@@ -68,13 +68,7 @@ struct RouteTests {
         #expect(session.state == .idle)
     }
 
-    @Test @MainActor func routesAPINormalizationFeedsLegacyBeaconExtraction() throws {
-        let data = Data(#"{"routes":[{"legs":[{"steps":[{"polyline":{"encodedPolyline":"???gE"},"navigationInstruction":{"instructions":"Go east"}},{"polyline":{"encodedPolyline":"?gEgE?"},"navigationInstruction":{"instructions":"Turn left"}}]}]}]}"#.utf8)
-        let route = try GoogleMapsService.route(fromRoutesResponse: data, name: "Shop")
-        #expect(route.beacons.count == 3)
-        #expect(route.destinationName == "Shop")
-        #expect(route.beacons.last?.isFinalDestination == true)
-    }
+
 }
 
 struct FeedbackTests {

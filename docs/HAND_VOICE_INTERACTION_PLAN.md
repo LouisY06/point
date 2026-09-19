@@ -45,7 +45,7 @@ Cancellation stops the demo/recording and the movie; typing or opening device se
 
 The default tap flow remains a visual demo, as requested. It waits for the opening, displays “Take me to Shake Shack” word by word, shows a route-processing state, then reveals the existing synthetic sample route. No microphone input, paid API call or synthesized spoken reply is used in this mode. The banner identifies it as a voice preview; the map identifies the sample route.
 
-The opt-in live recorder is unchanged: it records an M4A file, then sends it for batch transcription. It does not yet deliver partial transcripts or speech endpoint detection. Streaming speech-to-text and a spoken destination confirmation remain separate work. Start capture as soon as permission/session setup is ready, independently of decorative playback. Keep provider credentials on a backend. Resolve actual places and walking routes through the map service; do not invent destination addresses.
+The opt-in live recorder is unchanged: it records an M4A file, then sends it for batch transcription. It does not yet deliver partial transcripts or speech endpoint detection. Streaming speech-to-text and a spoken destination confirmation remain separate work. Start capture as soon as permission/session setup is ready, independently of decorative playback. Keep provider credentials on a backend. Resolve actual places and walking routes through native Apple Maps; do not invent destination addresses.
 
 ## Validation and remaining device check
 

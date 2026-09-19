@@ -53,7 +53,7 @@ The implementation follows Apple's [central-role workflow](https://developer.app
 
 ## Verification so far
 
-- All 16 core tests pass, including five echo-protocol tests.
+- The core suite includes five passing echo-protocol tests; see the project plan for the current full-suite and Apple Maps validation results.
 - Simulator and unsigned physical-iPhone builds succeed.
 - Setup opening, simulator recovery message, and dismissal were checked in the simulator.
 - A live iPhone-to-board connection has not yet been exercised. Run the bench steps above, then check board power loss, Bluetooth off, permission denial, missing reply, reconnect, and background/foreground behavior with actual hardware.

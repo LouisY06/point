@@ -33,7 +33,7 @@ struct PointHomeView: View {
                     .accessibilityHidden(model.stage == .route)
 
                 if let route = model.route, model.stage == .route {
-                    RouteMapView(route: route, useGoogle: model.googleMapConfigured)
+                    RouteMapView(route: route)
                         .padding(.bottom, model.journeyStarted ? 300 : 228)
                         .ignoresSafeArea()
                         .scaleEffect(reduceMotion ? 1 : 1.12 - reveal * 0.12)
@@ -231,7 +231,7 @@ struct PointHomeView: View {
                         }
                     }
                 }
-                Section { Text("Google Maps").font(.caption).foregroundStyle(.secondary) }
+                Section { Text("Apple Maps").font(.caption).foregroundStyle(.secondary) }
             }
             .navigationTitle("Is this the place?")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { model.cancel() } } }

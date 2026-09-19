@@ -20,7 +20,7 @@ Voice input: a microphone becomes a waveform while actually recording. Search: a
 
 ## Accessibility
 
-Do not use color, waveform motion, or vibration as the only status communication. Use plain status text and VoiceOver announcements. No fake “connected” indicator. Demo navigation is explicitly labeled and never mistaken for a live route. Keep Google attribution visible; fallback preview uses Apple's map with its attribution.
+Do not use color, waveform motion, or vibration as the only status communication. Use plain status text and VoiceOver announcements. No fake “connected” indicator. Demo navigation is explicitly labeled and never mistaken for a live route. Keep Apple Maps attribution visible on both sample and live maps.
 
 ## Motion reference
 

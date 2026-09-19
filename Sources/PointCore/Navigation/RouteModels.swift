@@ -4,7 +4,7 @@ import Foundation
 // Checkpoint / ping-target structure retained from the existing map algorithm.
 struct DirectionsStepRecord {
     let htmlInstructions: String
-    let polylineEncoded: String
+    let coordinates: [CLLocationCoordinate2D]
     let distanceMeters: Double
 }
 

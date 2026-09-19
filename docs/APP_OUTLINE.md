@@ -6,7 +6,7 @@ The default build currently runs a simulated voice-to-route preview. The flow be
 
 1. Open Point to a white glove outline with one microphone control on its back.
 2. Tap, say “take me to Shake Shack,” and tap to finish. A short recording is sent to OpenAI for transcription; the UI shows recording and searching states distinctly.
-3. Search Google Places near the phone's location. Show the transcript, matching place names and addresses. The user chooses the intended place; no first-result auto-navigation.
+3. Search Apple Maps near the phone's location. Show the transcript, matching place names and addresses. The user chooses the intended place; no first-result auto-navigation.
 4. The glove control becomes the origin of a clean map reveal. Preview the route and press Start walking.
 5. Phone GPS advances the active route beacon. Glove orientation supplies the pointing heading. Vibration confirms when pointing at that beacon.
 6. Pause or end the session. Future BLE integration supplies actual heading, gesture and battery events.
@@ -18,10 +18,10 @@ Typing is a first-class alternative. No-results, denied microphone access, missi
 ```mermaid
 flowchart LR
     Mic[iPhone microphone] --> STT[OpenAI transcription]
-    Typed[Typed destination] --> Search[Google Places]
+    Typed[Typed destination] --> Search[Apple Maps place search]
     STT --> Search
     Search --> Confirm[Choose a place]
-    Confirm --> Routes[Google walking route]
+    Confirm --> Routes[Apple Maps walking route]
     Routes --> Reused[Existing route geometry and beacon algorithm]
     Reused --> Map[Map UI]
     Reused --> Session[Navigation session]
@@ -31,7 +31,7 @@ flowchart LR
     Feedback --> Motor[Short confirmation pulse]
 ```
 
-The reusable core is Swift. UI composition is SwiftUI, with a UIKit bridge for Google's map, and an Apple map fallback for credential-free UI review. Network clients have injectable URLSession/credentials and sit behind small protocols. Runtime provider credentials are currently for local Debug development only. An authenticated backend is still needed for distribution; no account system or database has been added to the prototype.
+The reusable core is Swift. SwiftUI and MapKit render both sample and live routes. `AppleMapsService` uses `MKLocalSearch` and `MKDirections`, then passes decoded step coordinates into the existing route segmenter and beacon extractor. Maps need no API key or custom backend. OpenAI transcription still uses a Debug-only development credential; distribution requires an authenticated voice backend. No account system or database has been added. Typed search already uses MapKit independently of the simulated microphone flow.
 
 ## Deliberately small first version
 
@@ -48,18 +48,18 @@ One voice interaction, one place-selection sheet, one map view, one pointing sig
 
 ## Remaining integration
 
-1. Configure provider access and test actual voice → place → route on an iPhone.
+1. Test typed Apple Maps search → selected place → walking route on an iPhone; configure OpenAI separately for live voice.
 2. Replace `SimulatedGlove` with CoreBluetooth once firmware UUIDs and payloads are agreed.
 3. Test glove-to-north calibration, placement, magnetometer interference, and physical vibration comfort.
 4. Connect ongoing session state to the map and production device status, and exercise rerouting outdoors.
-5. Add the authenticated provider proxy and validate background/locked-phone behavior before distribution.
+5. Add the authenticated voice proxy and validate background/locked-phone behavior before distribution.
 
 The current UI demo's direction toggle previews alignment, not measured sensor data. The Swift command-line demo runs the actual core feedback calculation.
 
 ## References checked
 
 - [OpenAI file transcription](https://developers.openai.com/api/docs/guides/speech-to-text): completed M4A recordings can be uploaded for a transcript.
-- [Google Places Text Search](https://developers.google.com/maps/documentation/places/web-service/text-search): text query, location bias, explicit response fields.
-- [Google Routes migration](https://developers.google.com/maps/documentation/routes/migrate-routes): current Routes responses differ from legacy Directions; normalize steps before using the old segmenter.
+- [Apple place search](https://developer.apple.com/documentation/mapkit/mklocalsearch): native text search with a nearby search region.
+- [Apple walking directions](https://developer.apple.com/documentation/mapkit/mkdirections): walking route steps and polylines feed the existing beacon algorithm.
 - [Apple Core Bluetooth background behavior](https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html): background events do not imply unlimited continuous app execution. This version does not claim locked-screen operation is complete.
 - [Apple fluid UI transitions](https://developer.apple.com/videos/play/wwdc2024/10145/): retain a recognizable source control across the transition; honor interruptions and Reduce Motion.

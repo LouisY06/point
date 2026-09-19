@@ -18,7 +18,6 @@
 		BBDD7648D25953C3F5CDCA7B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 85B5ADE3ABD76CA57AB7D5C5 /* Assets.xcassets */; };
 		BFB4F057E9DBC376FC4E4A46 /* HandMotionPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5E999FC2AD8E110E41561BD /* HandMotionPlayer.swift */; };
 		C0C1A94F5B018A58AD4AF0DA /* PointCore in Frameworks */ = {isa = PBXBuildFile; productRef = 746FC08E4B10844B72888CC5 /* PointCore */; };
-		C5060DAEB29BA99B18732DC3 /* GoogleMaps in Frameworks */ = {isa = PBXBuildFile; productRef = 65FB13C42D9D6C992FCFD0D9 /* GoogleMaps */; };
 		C527F6FC6E384358F9872A2D /* PointViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4242BA39F321C6A7AFC0C442 /* PointViewModel.swift */; };
 		C9EEADD9F8F0F87605418583 /* GloveOutline.swift in Sources */ = {isa = PBXBuildFile; fileRef = B33CDC5FFA83E2341B8C55F6 /* GloveOutline.swift */; };
 /* End PBXBuildFile section */
@@ -27,7 +26,7 @@
 		0B0D02EC547987D58B1A1878 /* PointTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointTheme.swift; sourceTree = "<group>"; };
 		0D9D3A79EA5677961D2F65B0 /* DeviceConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceConnection.swift; sourceTree = "<group>"; };
 		4242BA39F321C6A7AFC0C442 /* PointViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointViewModel.swift; sourceTree = "<group>"; };
-		44CB5A7C8262D0D8A5641262 /* Point.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Point.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		44CB5A7C8262D0D8A5641262 /* Point.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Point.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		502E38DB6BBE2F2B65D3A016 /* PointHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointHomeView.swift; sourceTree = "<group>"; };
 		85B5ADE3ABD76CA57AB7D5C5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		902411195D457116B06956C0 /* HackMIT */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HackMIT; path = .; sourceTree = SOURCE_ROOT; };
@@ -46,7 +45,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				C0C1A94F5B018A58AD4AF0DA /* PointCore in Frameworks */,
-				C5060DAEB29BA99B18732DC3 /* GoogleMaps in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -131,7 +129,6 @@
 			name = Point;
 			packageProductDependencies = (
 				746FC08E4B10844B72888CC5 /* PointCore */,
-				65FB13C42D9D6C992FCFD0D9 /* GoogleMaps */,
 			);
 			productName = Point;
 			productReference = 44CB5A7C8262D0D8A5641262 /* Point.app */;
@@ -145,6 +142,8 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
 			};
 			buildConfigurationList = 5122EB488A1461890A7D064D /* Build configuration list for PBXProject "Point" */;
 			developmentRegion = en;
@@ -156,7 +155,6 @@
 			mainGroup = 4124EC47F676BDF70CB5C60E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				CC6A2D5B5C98ACBA8F4B6448 /* XCRemoteSwiftPackageReference "ios-maps-sdk" */,
 				F4595D1BD0AF7D26B8337325 /* XCLocalSwiftPackageReference "." */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -405,23 +403,7 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		CC6A2D5B5C98ACBA8F4B6448 /* XCRemoteSwiftPackageReference "ios-maps-sdk" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/googlemaps/ios-maps-sdk";
-			requirement = {
-				kind = exactVersion;
-				version = 10.8.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
 /* Begin XCSwiftPackageProductDependency section */
-		65FB13C42D9D6C992FCFD0D9 /* GoogleMaps */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = CC6A2D5B5C98ACBA8F4B6448 /* XCRemoteSwiftPackageReference "ios-maps-sdk" */;
-			productName = GoogleMaps;
-		};
 		746FC08E4B10844B72888CC5 /* PointCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PointCore;

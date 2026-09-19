@@ -23,12 +23,10 @@ import UIKit
     private var work: Task<Void, Never>?
     private var recordingLimit: Task<Void, Never>?
 
-    var googleMapConfigured: Bool {
-        !(ProcessInfo.processInfo.environment["GOOGLE_MAPS_IOS_KEY"] ?? "").isEmpty
-    }
+    private let maps = AppleMapsService()
 
     // Local development only. Production app should inject authenticated backend implementations
-    // of SpeechTranscribing / PlaceSearching / RouteProviding, keeping provider secrets on the server.
+    // of SpeechTranscribing, keeping the OpenAI secret on the server. MapKit needs no key.
     private var developmentVoiceKey: String? {
         #if DEBUG
         ProcessInfo.processInfo.environment["OPENAI_API_KEY"]
@@ -36,14 +34,6 @@ import UIKit
         nil
         #endif
     }
-    private var developmentMapsKey: String? {
-        #if DEBUG
-        ProcessInfo.processInfo.environment["GOOGLE_MAPS_SERVER_KEY"]
-        #else
-        nil
-        #endif
-    }
-
     override init() {
         super.init()
         controller = PointController(glove: glove)
@@ -80,7 +70,7 @@ import UIKit
         }
         if stage == .recording { finishRecording(); return }
         guard stage != .searching else { return }
-        guard let key = developmentVoiceKey, !key.isEmpty, let mapsKey = developmentMapsKey, !mapsKey.isEmpty else {
+        guard let key = developmentVoiceKey, !key.isEmpty else {
             message = "Voice search isn't connected yet. You can explore the sample walk below."
             return
         }
@@ -125,9 +115,6 @@ import UIKit
     }
 
     private func search(_ text: String) async {
-        guard let key = developmentMapsKey, !key.isEmpty else {
-            fail(ServiceError.missingCredential); return
-        }
         guard let location = currentLocation, location.horizontalAccuracy >= 0,
               location.horizontalAccuracy <= 100, abs(location.timestamp.timeIntervalSinceNow) < 30 else {
             requestLocation()
@@ -136,7 +123,7 @@ import UIKit
             return
         }
         do {
-            let places = try await GoogleMapsService(apiKey: { key }).search(VoiceDestination.destinationQuery(from: text), near: location.coordinate)
+            let places = try await maps.search(VoiceDestination.destinationQuery(from: text), near: location.coordinate)
             guard !Task.isCancelled else { return }
             isDemo = false
             candidates = places
@@ -146,12 +133,18 @@ import UIKit
     }
 
     func select(_ place: PlaceCandidate) {
-        guard let location = currentLocation, let key = developmentMapsKey else { return }
+        guard let location = currentLocation, location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= 100, abs(location.timestamp.timeIntervalSinceNow) < 30 else {
+            requestLocation()
+            message = "Waiting for your location. Allow location access, then try again."
+            stage = .home
+            return
+        }
         work?.cancel()
         stage = .searching
         work = Task {
             do {
-                let plan = try await GoogleMapsService(apiKey: { key }).walkingRoute(from: location.coordinate, to: place.coordinate, name: place.name)
+                let plan = try await maps.walkingRoute(from: location.coordinate, to: place.coordinate, name: place.name)
                 guard !Task.isCancelled else { return }
                 selectedPlace = place
                 route = plan
@@ -249,7 +242,7 @@ import UIKit
 }
 
 enum DemoRoute {
-    // Synthetic geometry for interface review. Not Google directions or a verified store location.
+    // Synthetic geometry for interface review. Not live directions or a verified store location.
     static let coordinates: [CLLocationCoordinate2D] = [
         .init(latitude: 42.3652, longitude: -71.1035),
         .init(latitude: 42.3647, longitude: -71.1027),

@@ -6,9 +6,6 @@ options:
 packages:
   PointCore:
     path: .
-  GoogleMaps:
-    url: https://github.com/googlemaps/ios-maps-sdk
-    exactVersion: 10.8.0
 targets:
   Point:
     type: application
@@ -16,7 +13,6 @@ targets:
     sources: [App]
     dependencies:
       - package: PointCore
-      - package: GoogleMaps
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.point.navigator

@@ -3,7 +3,7 @@
 import CoreLocation
 import Foundation
 
-/// Result of parsing Directions JSON into dense checkpoints along the walking path.
+/// Result of merging provider step coordinates into checkpoints along the walking path.
 struct RouteSegmentationResult {
     let checkpoints: [RouteCheckpoint]
     let steps: [DirectionsStepRecord]
@@ -17,7 +17,7 @@ enum RouteSegmentationError: Error {
     case emptyPath
 }
 
-/// Builds merged, deduped polylines from `legs[0].steps` and resamples into checkpoints.
+/// Merges decoded step paths and resamples into checkpoints; accepts legacy JSON fixtures too.
 final class RouteSegmenter {
 
     private let checkpointIntervalMeters: Double
@@ -41,25 +41,27 @@ final class RouteSegmenter {
             throw RouteSegmentationError.noSteps
         }
 
-        var steps: [DirectionsStepRecord] = []
-        steps.reserveCapacity(stepDicts.count)
-
-        /// Merged vertices with step index (fix #1: dedupe shared step boundary points).
-        var tagged: [(CLLocationCoordinate2D, Int)] = []
-        tagged.reserveCapacity(stepDicts.count * 8)
-
-        for (stepIndex, sd) in stepDicts.enumerated() {
-            let html = sd["html_instructions"] as? String ?? ""
+        let steps = try stepDicts.map { sd -> DirectionsStepRecord in
             guard let polyObj = sd["polyline"] as? [String: Any],
                   let encoded = polyObj["points"] as? String else { throw RouteSegmentationError.emptyPath }
-            let distObj = sd["distance"] as? [String: Any]
-            let distVal = (distObj?["value"] as? Double)
-                ?? (distObj?["value"] as? Int).map(Double.init)
-                ?? 0
-            steps.append(DirectionsStepRecord(htmlInstructions: html, polylineEncoded: encoded, distanceMeters: distVal))
+            let coordinates = PolylineDecoder.decode(encoded)
+            guard coordinates.count >= 2 else { throw RouteSegmentationError.emptyPath }
+            return DirectionsStepRecord(htmlInstructions: sd["html_instructions"] as? String ?? "",
+                                        coordinates: coordinates,
+                                        distanceMeters: (sd["distance"] as? [String: Any])?["value"] as? Double ?? 0)
+        }
+        return try segment(steps: steps)
+    }
 
-            let decoded = PolylineDecoder.decode(encoded)
-            guard decoded.count >= 2 else { throw RouteSegmentationError.emptyPath }
+    /// Provider-neutral entry point: MapKit already supplies decoded step coordinates.
+    func segment(steps: [DirectionsStepRecord]) throws -> RouteSegmentationResult {
+        guard !steps.isEmpty else { throw RouteSegmentationError.noSteps }
+        var tagged: [(CLLocationCoordinate2D, Int)] = []
+        for (stepIndex, step) in steps.enumerated() {
+            let decoded = step.coordinates
+            guard decoded.allSatisfy({ CLLocationCoordinate2DIsValid($0) }) else {
+                throw RouteSegmentationError.emptyPath
+            }
             for p in decoded {
                 if let last = tagged.last {
                     let d = RouteGeometry.distanceMeters(last.0, p)
