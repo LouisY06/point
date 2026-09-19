@@ -207,6 +207,7 @@ struct PointHomeView: View {
                     Spacer(minLength: 12)
                     Image(systemName: "location.north.circle")
                         .font(.largeTitle).foregroundStyle(PointTheme.action)
+                        .accessibilityHidden(true)
                 }
                 Divider()
                 if model.journeyStarted {
