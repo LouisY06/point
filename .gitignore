@@ -18,3 +18,6 @@ videos/hand-pull-motion/**/*.log
 videos/hand-pull-motion/**/snapshots/
 videos/hand-pull-motion/renders/encoded-*.png
 videos/hand-pull-motion/renders/tail-alpha.txt
+
+# Simulation harness artifacts (traces, reports).
+.sim-out/
