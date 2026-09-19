@@ -78,8 +78,8 @@ struct HandVoiceInteraction: View {
                 VStack(spacing: 4) {
                     if prompt != nil && needsConfirmation {
                         HStack(spacing: 28) {
-                            Button(confirmTitle, action: onConfirm).frame(minHeight: 44)
-                            Button(declineTitle, action: onDecline).frame(minHeight: 44)
+                            Button(action: onConfirm) { Text(confirmTitle).frame(minHeight: 44) }
+                            Button(action: onDecline) { Text(declineTitle).frame(minHeight: 44) }
                         }
                         .font(.subheadline.weight(.medium))
                     }
