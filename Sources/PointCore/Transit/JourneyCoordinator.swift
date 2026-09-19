@@ -65,6 +65,10 @@ import Foundation
     /// True from alighting until a fresh, accurate fix proves we are back outside. The walking
     /// session runs (so the map is right) but no instructions or pointing should be given.
     @Published public private(set) var awaitingSignal = false
+    /// Test mode: watch the next ride's board stop from the moment a walking leg starts, and cue
+    /// `vehicleArrived` whenever a vehicle on that route/direction arrives there, without requiring
+    /// the rider to be at the stop. Later this narrows to "at the stop and arriving".
+    public var cueArrivalsWhileWalking = true
     public var onEvent: ((Event) -> Void)?
 
     public let controller: PointController
@@ -190,9 +194,30 @@ import Foundation
     // MARK: Reducers (internal for tests; the poll loops call them)
 
     func handleArrivals(_ arrivals: [TransitArrival], now: Date) {
-        guard let leg = phase.legIndex, let ride = ride(at: leg) else { return }
+        // While walking, the ride of interest is the one this leg leads to.
+        guard let current = phase.legIndex else { return }
+        let leg: Int
+        if case .walking = phase { guard let next = rideIndex(after: current) else { return }; leg = next } else { leg = current }
+        guard let ride = ride(at: leg) else { return }
         let acceptable = arrivals.filter { $0.patternID == nil || ride.acceptablePatternIDs.contains($0.patternID!) }
         switch phase {
+        case .walking:
+            // Test mode: cue every arrival of our route/direction at the board stop while still walking.
+            guard cueArrivalsWhileWalking else { return }
+            countdown = acceptable.first.map { Countdown(headsign: $0.headsign.isEmpty ? ride.headsign : $0.headsign, secondsAway: $0.secondsAway(now: now),
+                                                          status: $0.status, routeName: ride.route.name) }
+            for arrival in acceptable {
+                let atPlatform = arrival.vehicle.map { vehicle in
+                    vehicle.platformStopID.map { ride.boardPlatformIDs.contains($0) } == true && (vehicle.status == .stoppedAt || vehicle.status == .incomingAt)
+                } ?? false
+                let imminent = (arrival.secondsAway(now: now) ?? .max) <= 45
+                guard atPlatform || imminent else { continue }
+                let key = "\(arrival.tripID)/\(atPlatform ? arrival.vehicle!.status.rawValue : "imminent")"
+                if cued.insert(key).inserted {
+                    controller.emit(.vehicleArrived)
+                    onEvent?(.vehicleArriving(ride))
+                }
+            }
         case .waitingAtStop, .vehicleArriving:
             let next = acceptable.first
             countdown = next.map { Countdown(headsign: $0.headsign.isEmpty ? ride.headsign : $0.headsign, secondsAway: $0.secondsAway(now: now),
@@ -271,6 +296,14 @@ import Foundation
         awaitingSignal = false
         try controller.start(walk, at: fix)
         onEvent?(.walkingLegStarted(leg: leg, toward: walk.destinationName))
+        if cueArrivalsWhileWalking, let rideLeg = rideIndex(after: leg), let ride = ride(at: rideLeg) {
+            countdown = nil
+            startPolling(every: pollInterval) { [weak self] in
+                guard let self else { return { _ in } }
+                let result = try? await transit.arrivals(at: ride.board, route: ride.routeFilter, directionID: ride.directionID)
+                return { now in self.applyArrivalsPoll(result, now: now) }
+            }
+        }
     }
 
     private func walkLegCompleted(_ leg: Int, now: Date = Date()) {
@@ -387,6 +420,13 @@ import Foundation
 
     private func resumePolling() {
         switch phase {
+        case .walking(let leg):
+            guard cueArrivalsWhileWalking, let rideLeg = rideIndex(after: leg), let ride = ride(at: rideLeg) else { return }
+            startPolling(every: pollInterval) { [weak self] in
+                guard let self else { return { _ in } }
+                let result = try? await transit.arrivals(at: ride.board, route: ride.routeFilter, directionID: ride.directionID)
+                return { now in self.applyArrivalsPoll(result, now: now) }
+            }
         case .waitingAtStop(let leg), .vehicleArriving(let leg, _):
             guard let ride = ride(at: leg) else { return }
             startPolling(every: pollInterval) { [weak self] in

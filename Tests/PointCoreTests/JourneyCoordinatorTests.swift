@@ -170,6 +170,37 @@ import Testing
         #expect(events.contains(.signalRestored(leg: 2)))
     }
 
+    @Test func testModeCuesArrivalsAtTheBoardStopWhileStillWalking() throws {
+        let glove = SimulatedGlove(); glove.connect()
+        let coordinator = JourneyCoordinator(controller: PointController(glove: glove), transit: FakeTransit(), pollInterval: .seconds(60))
+        var events: [JourneyCoordinator.Event] = []
+        coordinator.onEvent = { events.append($0) }
+        let plan = makePlan()
+        try coordinator.start(plan, at: nil, now: epoch)
+        #expect(coordinator.phase == .walking(leg: 0))
+        // A train stopped at our platform while we are still walking: buzz once, stay walking, show the countdown.
+        coordinator.handleArrivals([arrival("trip-A", status: .stoppedAt, platform: "r-kendall-s", seconds: 30)], now: epoch)
+        #expect(coordinator.phase == .walking(leg: 0))
+        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 1)
+        #expect(events.contains(.vehicleArriving(plan.rides[0])))
+        #expect(coordinator.countdown?.secondsAway == 30)
+        coordinator.handleArrivals([arrival("trip-A", status: .stoppedAt, platform: "r-kendall-s", seconds: 20)], now: epoch.addingTimeInterval(10))
+        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 1) // Same trip/status: no repeat.
+        // Wrong direction never cues; a different trip that is imminent (no vehicle yet) does.
+        coordinator.handleArrivals([TransitArrival(tripID: "north", patternID: "Red-1-1", headsign: "Alewife", time: epoch.addingTimeInterval(70), status: nil,
+                                                   vehicle: VehicleStatus(vehicleID: "N", status: .stoppedAt, platformStopID: "r-kendall-n", coordinate: nil, updatedAt: epoch)),
+                                    TransitArrival(tripID: "trip-B", patternID: "Red-3-0", headsign: "Braintree", time: epoch.addingTimeInterval(100), status: nil, vehicle: nil)],
+                                   now: epoch.addingTimeInterval(60))
+        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 2)
+        // Off by default when test mode is disabled.
+        let quiet = JourneyCoordinator(controller: PointController(glove: glove), transit: FakeTransit(), pollInterval: .seconds(60))
+        quiet.cueArrivalsWhileWalking = false
+        try quiet.start(makePlan(), at: nil, now: epoch)
+        let before = glove.commands.count
+        quiet.handleArrivals([arrival("trip-C", status: .stoppedAt, platform: "r-kendall-s")], now: epoch)
+        #expect(glove.commands.count == before)
+    }
+
     @Test func wrongTrainAndMissedStopAskForAReplan() throws {
         let glove = SimulatedGlove(); glove.connect()
         let coordinator = JourneyCoordinator(controller: PointController(glove: glove), transit: FakeTransit(), pollInterval: .seconds(60))

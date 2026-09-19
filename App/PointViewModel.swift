@@ -573,8 +573,13 @@ import UIKit
         case .idle: return "Ready"
         case .walking(let leg):
             if awaitingSignal { return "Head for the exit · Directions resume when GPS returns" }
-            if case .walk(let walk) = journeyPlan.legs[leg] { return "Walk to \(walk.destinationName)" }
-            return "Walking"
+            var text = "Walking"
+            if case .walk(let walk) = journeyPlan.legs[leg] { text = "Walk to \(walk.destinationName)" }
+            if let countdown = transitCountdown {
+                let when = countdown.status ?? countdown.secondsAway.map { $0 < 60 ? "now" : "in \($0 / 60) min" } ?? ""
+                text += " · \(countdown.routeName) \(when)"
+            }
+            return text
         case .waitingAtStop(let leg):
             guard let ride = ride(leg) else { return "Waiting" }
             if !liveTransitData { return "At \(ride.board.name) · No signal for live arrivals" }
@@ -626,8 +631,9 @@ import UIKit
             phoneTester.stop(status: "At \(ride.board.name) · Waiting for the \(ride.route.name)")
             announce("You're at \(ride.board.name). Wait for the \(ride.route.name) toward \(ride.headsign). I'll buzz when it arrives.")
         case .vehicleArriving(let ride):
-            if usePhoneAsGlove { phoneTester.vehicleArrived(message: "\(ride.route.name) is here · Board now") }
-            announce("Your \(ride.route.name) toward \(ride.headsign) is here. Board now.")
+            if usePhoneAsGlove { phoneTester.vehicleArrived(message: "\(ride.route.name) arriving at \(ride.board.name)") }
+            if isWalkingLeg { announce("\(ride.route.name) toward \(ride.headsign) is arriving at \(ride.board.name).") }
+            else { announce("Your \(ride.route.name) toward \(ride.headsign) is here. Board now.") }
         case .departedTentatively:
             announce("If you boarded, tap I'm on board. If not, tap Not on board.")
         case .boarded(let ride):
