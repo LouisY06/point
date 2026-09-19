@@ -245,7 +245,7 @@ struct PointHomeView: View {
                     }
                     HStack(spacing: 16) {
                         Button { model.startJourney() } label: {
-                            HStack { Text(model.isDemo ? "Try the walk" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right") }
+                            HStack { Text(model.isDemo ? "Try the walk" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right").accessibilityHidden(true) }
                                 .font(.body.weight(.semibold)).padding(.horizontal, 20).frame(minHeight: 54)
                                 .foregroundStyle(.white).background(PointTheme.accent, in: Capsule())
                         }
