@@ -16,7 +16,7 @@ open Point.xcodeproj
 
 The repository is private; teammates need repository access from its owner. For a physical iPhone, select your own development team in local signing settings.
 
-Open `Point.xcodeproj`, select the **Point** scheme, and run on an iPhone simulator. Tap the glove voice button to play a staged sample voice-to-map transition (hand pull, transcript, route preparation, map reveal), with no recording or input. **Preview** runs the same explicitly labeled sample route. The preview uses a synthetic route and simulated glove, not real directions or hardware telemetry.
+Open `Point.xcodeproj`, select the **Point** scheme, and run on an iPhone simulator. Tap the glove voice button to record a destination; your words appear as you speak (Apple Speech, on the phone). With an OpenAI key (see below) the final transcript comes from OpenAI; without one the on-device text is used. An unambiguous request (“McDonald's”, “the nearest CVS”, “the McDonald's on Mass Ave”) routes immediately; ambiguous results show a chooser. Launching with the `--preview-route` argument runs a staged sample voice-to-map transition (hand pull, transcript, route preparation, map reveal) with no recording or input. That preview uses a synthetic route and simulated glove, not real directions or hardware telemetry.
 
 XcodeGen regenerates the project from `project.yml`:
 
@@ -36,12 +36,10 @@ See [device setup and troubleshooting](docs/DEVICE_SETUP.md) and [firmware build
 
 ## Live development configuration
 
-In your **local, unshared** Xcode run scheme, set:
+The microphone always records and transcribes on the phone. For OpenAI's final transcript, supply a Debug-only key in either of two ways:
 
-| Variable | Purpose |
-| --- | --- |
-| `POINT_LIVE_VOICE=1` | Opt into real recording instead of the temporary animation preview |
-| `OPENAI_API_KEY` | OpenAI audio transcription, default `gpt-transcribe` |
+- In your **local, unshared** Xcode run scheme, set `OPENAI_API_KEY` (OpenAI audio transcription, default `gpt-transcribe`). This only applies to launches from Xcode.
+- For launches from the home screen, copy a `.env` file containing `OPENAI_API_KEY=…` into the app's Documents folder. `xcrun devicectl device copy to --device <id> --domain-type appDataContainer --domain-identifier com.point.navigator --source .env --destination Documents/dev.env`
 
 The development app records an M4A clip, transcribes it, searches nearby Apple Maps places, asks you to select a match, and requests a walking route. Location permission and an actual or simulated GPS fix are required. The microphone stops after 20 seconds; audio is removed locally after reading. Typing uses the same Apple Maps search and works without any API credentials or live-voice setting. Allow location access and wait for a GPS fix; in the simulator, select a simulated location. If the first search asks you to wait for location, retry once a fix arrives.
 
@@ -53,7 +51,7 @@ The Apple Maps migration passes 19 offline tests plus a separate live search-and
 
 ## What still needs to be done
 
-1. **Verify live input on an iPhone:** type a destination and check the selected walking route; then configure OpenAI and verify real recording/transcription. The microphone still starts the scripted demo by default.
+1. **Verify live input on an iPhone:** type a destination and check the selected walking route; then configure OpenAI and verify real recording/transcription.
 2. **Connect real glove guidance:** bench-test the BLE echo link, agree on heading/haptic packets, implement the navigation transport, calibrate true north, and drive the physical motor. Echo confirmation alone is not navigation.
 3. **Finish walking-session UI:** show the active beacon, pause/resume, arrival and degraded data; wire automatic rerouting and the foreground stale-data watchdog.
 4. **Field-test the algorithm:** validate corners, gradual bends, closely spaced turns, GPS uncertainty and arrival thresholds. Beacons are important route points, not every 15 metres; internal checkpoint resampling is still present.

@@ -53,7 +53,7 @@ struct HandVoiceInteraction: View {
                 .allowsHitTesting(!active)
                 .accessibilityHidden(active)
                 .accessibilityLabel("Speak a destination")
-                .accessibilityHint("Plays a preview: take me to Shake Shack")
+                .accessibilityHint("Starts listening. Say where you want to go, then tap Finish.")
 
                 TransparentHandMovie(motion: motion)
                     .frame(width: geometry.size.width, height: HandMotionTiming.height * scale)

@@ -1,3 +1,4 @@
+import Combine
 import CoreLocation
 import PointCore
 import SwiftUI
@@ -22,6 +23,7 @@ import UIKit
     private let locationManager = CLLocationManager()
     private var work: Task<Void, Never>?
     private var recordingLimit: Task<Void, Never>?
+    private var subscriptions = Set<AnyCancellable>()
 
     private let maps = AppleMapsService()
 
@@ -29,7 +31,14 @@ import UIKit
     // of SpeechTranscribing, keeping the OpenAI secret on the server. MapKit needs no key.
     private var developmentVoiceKey: String? {
         #if DEBUG
-        ProcessInfo.processInfo.environment["OPENAI_API_KEY"]
+        if let key = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !key.isEmpty { return key }
+        // A launch from the home screen has no Xcode environment, so also accept a dev.env file
+        // copied into the app's Documents folder (see README). Never bundled or committed.
+        let file = URL.documentsDirectory.appending(path: "dev.env")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        let prefix = "OPENAI_API_KEY="
+        return text.split(whereSeparator: \.isNewline).first { $0.hasPrefix(prefix) }
+            .map { String($0.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines) }
         #else
         nil
         #endif
@@ -39,6 +48,17 @@ import UIKit
         controller = PointController(glove: glove)
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        // Words appear as they are spoken; the final transcript replaces them after finishing.
+        recorder.$liveTranscript.sink { [weak self] text in
+            guard let self, stage == .recording else { return }
+            transcript = text
+        }.store(in: &subscriptions)
+    }
+
+    /// Ask for every permission on first launch, so no prompt interrupts a live voice request.
+    func requestPermissions() async {
+        _ = await VoiceRecorder.requestPermissions()
+        requestLocation()
     }
 
     func requestLocation() {
@@ -62,19 +82,11 @@ import UIKit
     }
 
     func microphone() {
-        // Temporary interaction preview requested by the user. No microphone or network access.
-        // Opt into the real recorder explicitly when the service configuration is ready.
-        guard ProcessInfo.processInfo.environment["POINT_LIVE_VOICE"] == "1" else {
-            playVoiceDemo()
-            return
-        }
+        guard !demoInFlight else { return }
         if stage == .recording { finishRecording(); return }
         guard stage != .searching else { return }
-        guard let key = developmentVoiceKey, !key.isEmpty else {
-            message = "Voice search isn't connected yet. You can explore the sample walk below."
-            return
-        }
         work?.cancel()
+        transcript = ""
         work = Task {
             do {
                 try await recorder.start()
@@ -92,19 +104,24 @@ import UIKit
 
     private func finishRecording() {
         recordingLimit?.cancel()
-        do {
-            let audio = try recorder.finish()
-            guard let key = developmentVoiceKey else { throw ServiceError.missingCredential }
-            stage = .searching
-            work = Task {
-                do {
-                    let text = try await OpenAITranscriber(authorization: { "Bearer \(key)" }).transcribe(audio: audio)
-                    guard !Task.isCancelled else { return }
-                    transcript = text
-                    await search(text)
-                } catch { fail(error) }
-            }
-        } catch { fail(error) }
+        stage = .searching
+        work = Task {
+            do {
+                let recording = try await recorder.finish()
+                guard !Task.isCancelled else { return }
+                // OpenAI gives the final transcript when configured; the live Apple Speech text
+                // is the fallback, so voice still works without a key or when the request fails.
+                var text = recording.transcript
+                if let key = developmentVoiceKey {
+                    do { text = try await OpenAITranscriber(authorization: { "Bearer \(key)" }).transcribe(audio: recording.audio) }
+                    catch { if text.isEmpty { throw error } }
+                }
+                guard !Task.isCancelled else { return }
+                guard !text.isEmpty else { throw ServiceError.emptyTranscript }
+                transcript = text
+                await search(text)
+            } catch { fail(error) }
+        }
     }
 
     func searchTyped(_ text: String) {
@@ -126,13 +143,24 @@ import UIKit
             let places = try await maps.search(VoiceDestination.destinationQuery(from: text), near: location.coordinate)
             guard !Task.isCancelled else { return }
             isDemo = false
-            candidates = places
-            stage = .choosing
-            announce(places.isEmpty ? "No places found. Try another name." : "Choose your destination. \(places.count) places found.")
+            switch DestinationResolver.resolve(request: text, candidates: places, from: location.coordinate) {
+            case .go(let place):
+                announce("Going to \(place.name), \(place.address).")
+                await route(to: place)
+            case .choose(let places):
+                candidates = places
+                stage = .choosing
+                announce(places.isEmpty ? "No places found. Try another name." : "Choose your destination. \(places.count) places found.")
+            }
         } catch { fail(error) }
     }
 
     func select(_ place: PlaceCandidate) {
+        work?.cancel()
+        work = Task { await route(to: place) }
+    }
+
+    private func route(to place: PlaceCandidate) async {
         guard let location = currentLocation, location.horizontalAccuracy >= 0,
               location.horizontalAccuracy <= 100, abs(location.timestamp.timeIntervalSinceNow) < 30 else {
             requestLocation()
@@ -140,18 +168,15 @@ import UIKit
             stage = .home
             return
         }
-        work?.cancel()
         stage = .searching
-        work = Task {
-            do {
-                let plan = try await maps.walkingRoute(from: location.coordinate, to: place.coordinate, name: place.name)
-                guard !Task.isCancelled else { return }
-                selectedPlace = place
-                route = plan
-                stage = .route
-                announce("Route to \(place.name) ready. Start when you're ready.")
-            } catch { fail(error) }
-        }
+        do {
+            let plan = try await maps.walkingRoute(from: location.coordinate, to: place.coordinate, name: place.name)
+            guard !Task.isCancelled else { return }
+            selectedPlace = place
+            route = plan
+            stage = .route
+            announce("Route to \(place.name) ready. Start when you're ready.")
+        } catch { fail(error) }
     }
 
     func playVoiceDemo() {

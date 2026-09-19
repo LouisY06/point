@@ -48,6 +48,16 @@ import PointCore
         }
     }
 
+    /// Creates the central manager at launch so the Bluetooth prompt appears with the other
+    /// onboarding permissions. Nothing is scanned until the user asks.
+    func prepare() {
+        #if !targetEnvironment(simulator)
+        guard central == nil else { return }
+        central = CBCentralManager(delegate: self, queue: .main,
+                                   options: [CBCentralManagerOptionShowPowerAlertKey: false])
+        #endif
+    }
+
     func scan() {
         guard canScan else { return }
         devices = []
@@ -66,13 +76,8 @@ import PointCore
         phase = .unavailable
         message = "Use Point on an iPhone to connect to the ESP32. The simulator can preview setup, but cannot test this Bluetooth link."
         #else
-        if central == nil {
-            // Create only after the user chooses Scan, so the permission prompt has context.
-            central = CBCentralManager(delegate: self, queue: .main,
-                                       options: [CBCentralManagerOptionShowPowerAlertKey: false])
-        } else if let central {
-            centralManagerDidUpdateState(central)
-        }
+        if central == nil { prepare() }
+        else if let central { centralManagerDidUpdateState(central) }
         #endif
     }
 

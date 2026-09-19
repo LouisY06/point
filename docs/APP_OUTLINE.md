@@ -5,8 +5,8 @@ The default build currently runs a simulated voice-to-route preview. The flow be
 ## User flow
 
 1. Open Point to a white glove outline with one microphone control on its back.
-2. Tap, say “take me to Shake Shack,” and tap to finish. A short recording is sent to OpenAI for transcription; the UI shows recording and searching states distinctly.
-3. Search Apple Maps near the phone's location. Show the transcript, matching place names and addresses. The user chooses the intended place; no first-result auto-navigation.
+2. Tap, say “take me to Shake Shack,” and tap to finish. Words appear on screen as they are spoken (Apple Speech on the phone). The recording is then sent to OpenAI for the final transcript when a key is configured; otherwise the on-device text is used.
+3. Search Apple Maps near the phone's location. An unambiguous request routes straight away: a chain or generic name goes to the nearest match, and a qualified request (“the McDonald's on Mass Ave”, a street number) uses Apple's top result. Only ambiguous results show a chooser with names and addresses. The route screen always names the chosen place and offers Change destination.
 4. The glove control becomes the origin of a clean map reveal. Preview the route and press Start walking.
 5. Phone GPS advances the active route beacon. Glove orientation supplies the pointing heading. Vibration confirms when pointing at that beacon.
 6. Pause or end the session. Future BLE integration supplies actual heading, gesture and battery events.

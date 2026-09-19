@@ -68,6 +68,11 @@ struct PointHomeView: View {
             if ProcessInfo.processInfo.arguments.contains("--preview-route") { model.preview() }
             if ProcessInfo.processInfo.arguments.contains("--device-setup") { showDeviceSetup = true }
         }
+        .task {
+            // Microphone, speech, location, then Bluetooth: iOS queues the prompts in order.
+            await model.requestPermissions()
+            deviceConnection.prepare()
+        }
     }
 
     private func home(geometry: GeometryProxy) -> some View {

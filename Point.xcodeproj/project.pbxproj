@@ -212,6 +212,7 @@
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to your development voice and maps service.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Your location guides you toward the next point on your walking route.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Say where you want to go to search for a destination.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Show your words on screen as you say where you want to go.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -239,6 +240,7 @@
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to your development voice and maps service.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Your location guides you toward the next point on your walking route.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Say where you want to go to search for a destination.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Show your words on screen as you say where you want to go.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

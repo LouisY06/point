@@ -87,12 +87,20 @@ public enum VoiceSearchState: String { case idle, transcribing, searching, choos
         errorMessage = error.localizedDescription
     }
 
-    /// Minimal single-turn phrasing support; the user's transcript stays intact and editable.
-    public static func destinationQuery(from text: String) -> String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: #"(?i)^(?:please\s+)?(?:take me to|navigate to|directions to|i want to go to)\s+"#,
-                                  with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Single-turn phrasing support; the user's transcript stays intact and editable. Strips the
+    /// request wrapper, "nearest"/"near me" (handled by DestinationResolver) and end punctuation.
+    nonisolated public static func destinationQuery(from text: String) -> String {
+        let patterns = [
+            #"(?i)^(?:(?:hey|ok|okay|hi)[,\s]+)?(?:(?:can|could|would) you\s+)?(?:please\s+)?"# +
+            #"(?:take me to|navigate to|navigate me to|directions to|get directions to|i want to go to|"# +
+            #"i need to go to|i'd like to go to|bring me to|get me to|walk me to|guide me to|go to|find me|find|where is|where's)\s+"#,
+            #"(?i)^(?:the\s+|a\s+)?(?:nearest|closest)\s+"#,
+            #"(?i)\s+(?:near me|nearby|close to me|closest to me|nearest to me)\s*$"#,
+            #"(?i)(?:,?\s*please)?[\s.!?,]*$"#
+        ]
+        return patterns.reduce(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            $0.replacingOccurrences(of: $1, with: "", options: .regularExpression)
+        }.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

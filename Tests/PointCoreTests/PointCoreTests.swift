@@ -154,3 +154,57 @@ struct VoiceTests {
         #expect(places.query.isEmpty)
     }
 }
+
+struct DestinationResolverTests {
+    private let here = CLLocationCoordinate2D(latitude: 42.36, longitude: -71.10)
+    private func place(_ name: String, _ id: String, north meters: Double) -> PlaceCandidate {
+        .init(id: id, name: name, address: "", coordinate: .init(latitude: 42.36 + meters / 111_000, longitude: -71.10))
+    }
+
+    @Test func destinationQueryStripsWrapperNearestAndPunctuation() {
+        #expect(VoiceDestination.destinationQuery(from: "Take me to Shake Shack.") == "Shake Shack")
+        #expect(VoiceDestination.destinationQuery(from: "Hey, can you take me to the nearest McDonald's, please?") == "McDonald's")
+        #expect(VoiceDestination.destinationQuery(from: "find a pharmacy near me") == "a pharmacy")
+        #expect(VoiceDestination.destinationQuery(from: "Where's the McDonald's on Mass Ave?") == "the McDonald's on Mass Ave")
+    }
+
+    @Test func chainNameGoesToNearestMatch() {
+        let far = place("McDonald's", "far", north: 2000)
+        let near = place("McDonald's", "near", north: 400)
+        let other = place("Burger King", "bk", north: 100)
+        guard case .go(let chosen) = DestinationResolver.resolve(request: "Take me to McDonalds", candidates: [far, other, near], from: here)
+        else { Issue.record("expected go"); return }
+        #expect(chosen.id == "near")
+    }
+
+    @Test func qualifiedRequestTrustsSearchRanking() {
+        let ranked = place("McDonald's", "ranked", north: 3000)
+        let near = place("McDonald's", "near", north: 200)
+        guard case .go(let chosen) = DestinationResolver.resolve(request: "the McDonald's on Mass Ave", candidates: [ranked, near], from: here)
+        else { Issue.record("expected go"); return }
+        #expect(chosen.id == "ranked")
+    }
+
+    @Test func nearestRequestPicksByDistanceEvenWhenRankedLower() {
+        let ranked = place("CVS Pharmacy", "ranked", north: 3000)
+        let near = place("CVS Pharmacy", "near", north: 200)
+        guard case .go(let chosen) = DestinationResolver.resolve(request: "nearest CVS", candidates: [ranked, near], from: here)
+        else { Issue.record("expected go"); return }
+        #expect(chosen.id == "near")
+    }
+
+    @Test func unrelatedResultsStillAskTheUser() {
+        let a = place("Harvard Art Museums", "a", north: 500)
+        let b = place("MIT List Center", "b", north: 900)
+        guard case .choose(let list) = DestinationResolver.resolve(request: "take me to the gallery", candidates: [a, b], from: here)
+        else { Issue.record("expected choose"); return }
+        #expect(list.count == 2)
+        guard case .choose(let empty) = DestinationResolver.resolve(request: "x", candidates: [], from: here) else { Issue.record("expected choose"); return }
+        #expect(empty.isEmpty)
+    }
+
+    @Test func singleResultGoesDirectly() {
+        guard case .go = DestinationResolver.resolve(request: "MIT Museum", candidates: [place("MIT Museum", "one", north: 100)], from: here)
+        else { Issue.record("expected go"); return }
+    }
+}

@@ -2,14 +2,43 @@
 import AVFoundation
 import Combine
 import Foundation
+import Speech
 
-/// Short, explicit recordings. The view owns start/finish/cancel; there is no always-on microphone.
+/// Short, explicit recordings with a live on-device transcript. The view owns start/finish/cancel;
+/// there is no always-on microphone. Audio is also written to a temporary M4A for batch transcription.
 @MainActor public final class VoiceRecorder: ObservableObject {
+    public struct Recording {
+        public let audio: Data
+        /// Best Apple Speech transcript; empty when speech recognition is unavailable or denied.
+        public let transcript: String
+    }
+
     @Published public private(set) var isRecording = false
-    private var recorder: AVAudioRecorder?
-    private var file: URL?
+    /// Updated word by word while recording.
+    @Published public private(set) var liveTranscript = ""
+
+    private let engine = AVAudioEngine()
+    private var tapInstalled = false
+    private var file: AVAudioFile?
+    private var fileURL: URL?
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var finalTranscript: String?
     private var recordingID = UUID()
     public init() {}
+
+    /// Ask for microphone and speech recognition up front so the prompts appear during onboarding.
+    public static func requestPermissions() async -> Bool {
+        let microphone = await AVAudioApplication.requestRecordPermission()
+        let speech = await speechAuthorization()
+        return microphone && speech == .authorized
+    }
+
+    private static func speechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
+        }
+    }
 
     public func start() async throws {
         cancel()
@@ -18,39 +47,102 @@ import Foundation
         let allowed = await AVAudioApplication.requestRecordPermission()
         guard recordingID == requestID, !Task.isCancelled else { throw CancellationError() }
         guard allowed else { throw RecorderError.permissionDenied }
+        let speechStatus = await Self.speechAuthorization()
+        guard recordingID == requestID, !Task.isCancelled else { throw CancellationError() }
+
         let audio = AVAudioSession.sharedInstance()
-        try audio.setCategory(.record, mode: .default)
+        try audio.setCategory(.record, mode: .measurement)
         try audio.setActive(true)
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { throw RecorderError.couldNotRecord }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("point-\(UUID().uuidString).m4a")
-        file = url
         do {
-            let recorder = try AVAudioRecorder(url: url, settings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 24000,
-                AVNumberOfChannelsKey: 1, AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-            ])
-            guard recorder.record() else { throw RecorderError.couldNotRecord }
-            self.recorder = recorder
+            let file = try AVAudioFile(forWriting: url, settings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: format.sampleRate,
+                AVNumberOfChannelsKey: format.channelCount, AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            ], commonFormat: format.commonFormat, interleaved: format.isInterleaved)
+            self.file = file
+            fileURL = url
+
+            // Live words come from Apple Speech; it is optional, so recording works without it.
+            var speech: SFSpeechAudioBufferRecognitionRequest?
+            if speechStatus == .authorized,
+               let recognizer = SFSpeechRecognizer(locale: .current) ?? SFSpeechRecognizer(), recognizer.isAvailable {
+                let request = SFSpeechAudioBufferRecognitionRequest()
+                request.shouldReportPartialResults = true
+                request.taskHint = .search
+                speech = request
+                self.request = request
+                task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+                    Task { @MainActor in self?.receive(result, error: error, id: requestID) }
+                }
+            }
+            input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in
+                try? file.write(from: buffer)
+                speech?.append(buffer)
+            }
+            tapInstalled = true
+            engine.prepare()
+            try engine.start()
             isRecording = true
         } catch { cancel(); throw error }
     }
 
-    public func finish() throws -> Data {
-        guard isRecording, let file else { throw RecorderError.couldNotRecord }
-        recorder?.stop()
+    private func receive(_ result: SFSpeechRecognitionResult?, error: Error?, id: UUID) {
+        guard recordingID == id else { return }
+        if let result {
+            let text = result.bestTranscription.formattedString
+            if !text.isEmpty { liveTranscript = text }
+            if result.isFinal { finalTranscript = text }
+        }
+        // Ending audio can surface an error instead of a final result; keep the last partial.
+        if error != nil, finalTranscript == nil { finalTranscript = liveTranscript }
+    }
+
+    public func finish() async throws -> Recording {
+        guard isRecording, let fileURL else { throw RecorderError.couldNotRecord }
+        let id = recordingID
+        stopCapture()
+        isRecording = false
+        request?.endAudio()
+        // Give the recognizer a moment for its final result; the last partial is the fallback.
+        var waited = 0
+        while finalTranscript == nil, request != nil, waited < 15 {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard recordingID == id else { throw CancellationError() }
+            waited += 1
+        }
+        let transcript = (finalTranscript ?? liveTranscript).trimmingCharacters(in: .whitespacesAndNewlines)
         defer { cancel() }
-        let data = try Data(contentsOf: file)
+        let data = try Data(contentsOf: fileURL)
         guard !data.isEmpty, data.count <= 24_000_000 else { throw ServiceError.invalidAudio }
-        return data
+        return Recording(audio: data, transcript: transcript)
     }
 
     public func cancel() {
         recordingID = UUID()
-        recorder?.stop()
-        recorder = nil
-        if let file { try? FileManager.default.removeItem(at: file) }
-        file = nil
+        stopCapture()
+        task?.cancel()
+        task = nil
+        request?.endAudio()
+        request = nil
+        if let fileURL { try? FileManager.default.removeItem(at: fileURL) }
+        fileURL = nil
+        finalTranscript = nil
+        liveTranscript = ""
         isRecording = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    private func stopCapture() {
+        if tapInstalled {
+            engine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        if engine.isRunning { engine.stop() }
+        // Releasing the file finalizes the M4A container so it can be read back.
+        file = nil
     }
 }
 

@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:point}",
+            "name": "Debug point-demo",
+            "target": "point-demo",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug point-demo"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:point}",
+            "name": "Release point-demo",
+            "target": "point-demo",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release point-demo"
+        }
+    ]
+}

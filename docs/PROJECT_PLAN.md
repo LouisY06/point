@@ -2,7 +2,7 @@
 
 Updated: September 19, 2026 — Apple Maps migration. This document separates code that exists today from integration work and future design work.
 
-Maps update: map display, destination search, and walking directions now use native Apple MapKit. The Google SDK and key requirements have been removed. Typed destination search needs no API credentials. The microphone remains a scripted demo unless live OpenAI transcription is explicitly enabled.
+Maps update: map display, destination search, and walking directions now use native Apple MapKit. The Google SDK and key requirements have been removed. Typed destination search needs no API credentials. The microphone now records and transcribes through OpenAI in Debug builds; the scripted demo runs only with the `--preview-route` launch argument.
 
 Bluetooth update: the merged ESP32-C6 echo firmware now has a matching iOS device setup flow. Users can scan, connect, and verify a unique command/status round trip. This remains separate from navigation capabilities, which the firmware does not yet implement. See [device setup](DEVICE_SETUP.md) for the bench test; live board verification is pending.
 
@@ -64,9 +64,9 @@ Separately, `swift run point-demo` drives the real feedback engine with simulate
 
 ### Destination entry
 
-Tap the microphone, speak a destination, and tap again to finish. Transcribe the recording, normalize phrases such as “take me to,” and search nearby places. Let the user choose a named place and address before fetching directions. Typing remains available for the same search flow.
+Tap the microphone, speak a destination, and tap again to finish. Apple Speech shows the words live while recording; OpenAI (when configured) supplies the final transcript. Normalize phrases such as “take me to” and “nearest,” search nearby places, and let `DestinationResolver` route directly when the request is unambiguous or ask the user otherwise. Typing remains available for the same search flow. All permissions (microphone, speech, location, Bluetooth) are requested at first launch.
 
-The simulated microphone interaction remains the default until live voice is explicitly enabled. Typed search already uses real Apple Maps without credentials. The current transcript animation is visual simulation, not streaming speech recognition or generated spoken audio. A conversational LLM, TTS service, and multi-turn dialogue are not implemented.
+The microphone records real audio and transcribes it with a Debug-only key; without a key it asks the user to type. The scripted demo is reachable only through the `--preview-route` launch argument. Typed search already uses real Apple Maps without credentials. The current transcript animation is visual simulation, not streaming speech recognition or generated spoken audio. A conversational LLM, TTS service, and multi-turn dialogue are not implemented.
 
 ### Route review
 
@@ -213,11 +213,11 @@ Use separate branches and pull requests. Coordinate before editing `PointViewMod
 
 ### M1 — Live destination services
 
-- First test typed Apple Maps search with location permission and internet access; no maps credentials are required. Configure the OpenAI Debug credential locally and explicitly enable live voice for microphone testing.
+- First test typed Apple Maps search with location permission and internet access; no maps credentials are required. Configure the OpenAI Debug credential locally (scheme environment variable or the Documents `dev.env` file) for microphone testing.
 - Verify the transcription model with the actual account; the current client default is `gpt-transcribe` and has not been validated against a funded account.
 - Exercise microphone denial, absent/stale GPS, empty results, network failure, cancellation, and a valid route.
 - Improve the first-location flow: it currently requests access and asks the user to retry once a usable fix arrives.
-- Keep selection explicit; never navigate automatically to the first search result.
+- `DestinationResolver` auto-selects when the request is unambiguous (nearest match for a chain/generic name; Apple's top result for a qualified request) and shows the chooser otherwise. Verify both paths and the Change destination recovery on a phone.
 
 ### M2 — Glove bench integration
 

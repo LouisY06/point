@@ -22,7 +22,7 @@ import MapKit
             guard CLLocationCoordinate2DIsValid(coordinate) else { return nil }
             return PlaceCandidate(id: UUID().uuidString, name: item.name ?? query,
                                   address: item.placemark.title ?? "", coordinate: coordinate)
-        }.prefix(5).map { $0 }
+        }.prefix(10).map { $0 }
     }
 
     public func walkingRoute(from origin: CLLocationCoordinate2D,
