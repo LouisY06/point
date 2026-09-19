@@ -253,7 +253,7 @@ struct CameraBeaconTestView: View {
         }
         .safeAreaInset(edge: .top) {
             HStack {
-                Text("Nearby beacon test").font(.headline)
+                Text("Nearby beacon test").font(.headline).accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button("Done") { model.close(); dismiss() }.frame(minWidth: 44, minHeight: 44)
             }.padding(.horizontal, 24).background(PointTheme.background)
