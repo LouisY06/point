@@ -6,8 +6,8 @@ public struct PhoneHapticEnvelope {
     public enum AngleRange {
         case nearbyTest, walkingRoute
 
-        var fullStrength: Double { self == .walkingRoute ? 15 : 0 }
-        var silent: Double { self == .walkingRoute ? 60 : 45 }
+        var fullStrength: Double { self == .walkingRoute ? 10 : 0 }
+        var silent: Double { self == .walkingRoute ? 35 : 45 }
     }
 
     public private(set) var intensity: Double = 0
@@ -37,7 +37,7 @@ public struct PhoneHapticEnvelope {
 
     public static func targetIntensity(errorDegrees: Double, angleRange: AngleRange = .nearbyTest) -> Double {
         guard errorDegrees.isFinite else { return 0 }
-        // Walking guidance has a broad center plateau so normal hand/compass jitter
+        // Walking guidance has a center plateau so normal hand/compass jitter
         // doesn't ask the user to hunt for a single exact direction.
         let proximity = max(0, min(1, 1 - (abs(errorDegrees) - angleRange.fullStrength) / (angleRange.silent - angleRange.fullStrength)))
         // Smoothstep softens both ends; cap output at 80% for initial phone testing.

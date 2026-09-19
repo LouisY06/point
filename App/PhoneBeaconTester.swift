@@ -45,8 +45,7 @@ import UIKit
         cueTask = nil
         envelope.reset()
         haptics.prepare()
-        if let error = haptics.errorMessage { status = error; return }
-        status = message
+        status = haptics.errorMessage ?? message
         cueTask = Task { [weak self] in
             guard let self else { return }
             let started = ProcessInfo.processInfo.systemUptime
@@ -76,13 +75,12 @@ import UIKit
             return
         }
         haptics.prepare()
-        if let error = haptics.errorMessage { status = error; return }
         motion.deviceMotionUpdateInterval = 1 / 30
         motion.startDeviceMotionUpdates(using: .xArbitraryZVertical) // Gravity only; north comes from CLLocation.
         previousIdleTimerSetting = UIApplication.shared.isIdleTimerDisabled
         UIApplication.shared.isIdleTimerDisabled = true
         running = true
-        status = "Waiting for compass and GPS"
+        status = haptics.errorMessage ?? "Waiting for compass and GPS"
         loop = Task { [weak self] in
             while !Task.isCancelled {
                 self?.tick()
@@ -178,7 +176,7 @@ import UIKit
         case .aligned: publishStatus("You’re pointing toward the beacon")
         case .checking: publishStatus("Hold that direction")
         case .offDirection:
-            if let angle = feedback.angularErrorDegrees, abs(angle) <= 15 {
+            if let angle = feedback.angularErrorDegrees, abs(angle) <= 10 {
                 publishStatus("Pointing toward the estimated beacon")
             } else {
                 publishStatus(value > 0.02 ? "Turn toward the beacon · Stronger means closer" : "Turn slowly to find the beacon")

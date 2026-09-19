@@ -6,20 +6,20 @@ import Testing
 struct PhonePointingTests {
     let now = Date(timeIntervalSince1970: 10_000)
 
-    @Test func walkingRangeHasBroadCenterAndGentleEdges() {
+    @Test func walkingRangeHasFocusedCenterAndGentleEdges() {
         func strength(_ angle: Double) -> Double {
             PhoneHapticEnvelope.targetIntensity(errorDegrees: angle, angleRange: .walkingRoute)
         }
-        for angle in [-15.0, -10, 0, 10, 15] { #expect(strength(angle) == 0.8) }
-        #expect(abs(strength(15.001) - 0.8) < 0.00001)
-        #expect(strength(20) > strength(35))
-        #expect(strength(35) > strength(50))
-        #expect(strength(50) > 0)
+        for angle in [-10.0, -5, 0, 5, 10] { #expect(strength(angle) == 0.8) }
+        #expect(abs(strength(10.001) - 0.8) < 0.00001)
+        #expect(strength(15) > strength(25))
+        #expect(strength(25) > strength(30))
+        #expect(strength(30) > 0)
         #expect(strength(-30) == strength(30))
-        for angle in [-180.0, -90, -60, 60, 90, 180, .nan, .infinity] { #expect(strength(angle) == 0) }
+        for angle in [-180.0, -90, -35, 35, 90, 180, .nan, .infinity] { #expect(strength(angle) == 0) }
         var envelope = PhoneHapticEnvelope(angleRange: .walkingRoute)
         for tick in 0...20 {
-            _ = envelope.update(errorDegrees: tick.isMultiple(of: 2) ? -14 : 14, gripValid: true,
+            _ = envelope.update(errorDegrees: tick.isMultiple(of: 2) ? -9 : 9, gripValid: true,
                                 now: now.addingTimeInterval(Double(tick) * 0.05))
         }
         #expect(envelope.intensity > 0.79) // Jitter inside the plateau does not weaken output.

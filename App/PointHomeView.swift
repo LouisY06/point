@@ -237,7 +237,7 @@ struct PointHomeView: View {
                         Toggle("Phone vibration guidance", isOn: $model.usePhoneAsGlove)
                             .font(.subheadline.weight(.medium))
                         if model.usePhoneAsGlove {
-                            Text("Point the camera end toward the highlighted beacon, screen down. Full strength within 15°; a gradual fade out to 60°. Two pulses mean beacon reached, then follow the next.")
+                            Text("Point the camera end toward the highlighted beacon, screen down. Full strength within 10°; a gradual fade out to 35°. Two pulses mean beacon reached, then follow the next.")
                                 .font(.caption).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
