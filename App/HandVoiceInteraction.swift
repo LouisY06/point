@@ -10,6 +10,8 @@ struct HandVoiceInteraction: View {
     let prompt: String?
     let spokenReply: String
     let needsConfirmation: Bool
+    var confirmTitle = "Yes, that's right"
+    var declineTitle = "Change destination"
     let onConfirm: () -> Void
     let onDecline: () -> Void
     let onSpeak: () -> Void
@@ -76,8 +78,8 @@ struct HandVoiceInteraction: View {
                 VStack(spacing: 4) {
                     if prompt != nil && needsConfirmation {
                         HStack(spacing: 28) {
-                            Button("Yes, that's right", action: onConfirm).frame(minHeight: 44)
-                            Button("Change destination", action: onDecline).frame(minHeight: 44)
+                            Button(confirmTitle, action: onConfirm).frame(minHeight: 44)
+                            Button(declineTitle, action: onDecline).frame(minHeight: 44)
                         }
                         .font(.subheadline.weight(.medium))
                     }

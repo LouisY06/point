@@ -100,7 +100,10 @@ public struct DestinationContext: Encodable {
 
 /// Route confirmation is computed from map data, independently of the language model.
 public enum WalkingRouteReview {
-    public static func prompt(destination: PlaceCandidate, originCity: String?, originCityAliases: [String] = [], duration: TimeInterval?, routeDistanceMeters: Double? = nil) -> String? {
+    /// `destinationCityAliases` come from reverse-geocoding the destination with the same service
+    /// as the origin, so the two sides use the same locality labels.
+    public static func prompt(destination: PlaceCandidate, originCity: String?, originCityAliases: [String] = [], duration: TimeInterval?,
+                              routeDistanceMeters: Double? = nil, destinationCityAliases: [String] = []) -> String? {
         func normalized(_ value: String?) -> String {
             let city = (value ?? "").components(separatedBy: ",").first ?? ""
             return city.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -109,7 +112,7 @@ public enum WalkingRouteReview {
         }
         let city = destination.city ?? ""
         let originNames = Set(([originCity ?? ""] + originCityAliases).map { normalized($0) }.filter { !$0.isEmpty })
-        let destinationNames = Set(([city] + destination.cityAliases).map { normalized($0) }.filter { !$0.isEmpty })
+        let destinationNames = Set(([city] + destination.cityAliases + destinationCityAliases).map { normalized($0) }.filter { !$0.isEmpty })
         // Locality labels can describe a neighborhood or postal city. A confirmed nearby,
         // short walking route should not produce a "different city" warning from names alone.
         let nearbyWalk = routeDistanceMeters.map { $0.isFinite && (0...1_500).contains($0) } == true

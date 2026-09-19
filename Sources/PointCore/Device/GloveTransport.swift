@@ -28,6 +28,9 @@ public enum HapticCommand: Equatable {
     case stop
     /// A finite, low-duty confirmation pulse; firmware must stop it locally after durationMs.
     case confirm(durationMs: UInt16, intensity: UInt8)
+    /// Our bus/train is at the platform (or it is time to get off). A recognisably different,
+    /// finite pattern; the firmware chooses the exact motor sequence.
+    case vehicleArrived
 }
 
 @MainActor public protocol GloveTransport: AnyObject {

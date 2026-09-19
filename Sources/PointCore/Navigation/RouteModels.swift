@@ -27,17 +27,23 @@ public struct RouteCheckpoint {
 
 /// A geographic route beacon, not a Bluetooth/iBeacon transmitter.
 public struct PingTarget {
+    /// What the beacon marks. Walking legs use turn/destination; transit journeys end a walking
+    /// leg on the stop to board and mark where to get off. There are no beacons while riding.
+    public enum Kind: Equatable { case turn, destination, boardStop, alightStop }
+
     public let coordinate: CLLocationCoordinate2D
     public let instruction: String
     public let isFinalDestination: Bool
     public let bearingAfterTurnDegrees: Double
+    public let kind: Kind
 
     public init(coordinate: CLLocationCoordinate2D, instruction: String,
-                isFinalDestination: Bool, bearingAfterTurnDegrees: Double) {
+                isFinalDestination: Bool, bearingAfterTurnDegrees: Double, kind: Kind = .turn) {
         self.coordinate = coordinate
         self.instruction = instruction
         self.isFinalDestination = isFinalDestination
         self.bearingAfterTurnDegrees = bearingAfterTurnDegrees
+        self.kind = kind
     }
 }
 
@@ -54,6 +60,19 @@ public struct RoutePlan {
         self.checkpoints = checkpoints
         self.beacons = beacons
         self.expectedTravelTime = expectedTravelTime
+    }
+
+    /// A walking leg of a transit journey ends on a stop, not the destination. The final beacon
+    /// keeps its position and remains the leg's terminal target; only its meaning changes.
+    public func relabelingFinalBeacon(kind: PingTarget.Kind, instruction: String, coordinate: CLLocationCoordinate2D? = nil) -> RoutePlan {
+        guard let last = beacons.last else { return self }
+        var updated = beacons
+        // A stop's real coordinate beats the sidewalk point Apple's route ends on.
+        updated[updated.count - 1] = PingTarget(coordinate: coordinate ?? last.coordinate, instruction: instruction,
+                                                isFinalDestination: true, bearingAfterTurnDegrees: last.bearingAfterTurnDegrees,
+                                                kind: kind)
+        return RoutePlan(destinationName: destinationName, checkpoints: checkpoints, beacons: updated,
+                         expectedTravelTime: expectedTravelTime)
     }
 }
 

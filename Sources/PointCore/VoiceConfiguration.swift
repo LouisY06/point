@@ -10,6 +10,8 @@ public struct VoiceConfiguration {
     public let voiceID: String
     public let speechModel: String
     public let speed: Double
+    /// Optional; the MBTA API works without a key at 20 requests/min.
+    public let mbtaKey: String?
 
     public init(environment: [String: String] = [:], fileContents: String = "") {
         let file = Self.parse(fileContents)
@@ -27,6 +29,7 @@ public struct VoiceConfiguration {
         speechModel = value("ELEVENLABS_MODEL_ID") ?? "eleven_flash_v2_5"
         let requestedSpeed = value("ELEVENLABS_VOICE_SPEED").flatMap(Double.init) ?? 0.95
         speed = requestedSpeed.isFinite ? min(1.2, max(0.7, requestedSpeed)) : 0.95
+        mbtaKey = value("MBTA_API_KEY")
     }
 
     private static func parse(_ contents: String) -> [String: String] {

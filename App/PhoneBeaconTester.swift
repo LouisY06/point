@@ -39,6 +39,13 @@ import UIKit
                 gap: 0.15, message: message, completion: message)
     }
 
+    /// Our bus or train is at the platform, or it is time to get off: four quick pulses, unlike
+    /// the two/three-pulse beacon cues. Works while the pointing loop is stopped (waiting/riding).
+    func vehicleArrived(message: String) {
+        guard UIApplication.shared.applicationState == .active else { return }
+        playCue(count: 4, duration: 0.12, gap: 0.1, message: message, completion: message)
+    }
+
     /// Arrival cues briefly take priority over directional intensity, then guidance resumes.
     private func playCue(count: Int, duration: Double, gap: Double, message: String, completion: String) {
         cueTask?.cancel()

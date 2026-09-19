@@ -35,8 +35,9 @@ struct PointHomeView: View {
                     .accessibilityHidden(model.stage == .route)
 
                 if let route = model.route, model.stage == .route {
-                    RouteMapView(route: route, activeBeaconIndex: model.journeyStarted ? model.activeBeaconIndex : nil,
-                                 phoneLocation: model.currentLocation, telemetry: model.mapTelemetry)
+                    RouteMapView(route: route, activeBeaconIndex: model.journeyStarted && (model.journeyPlan == nil || model.isWalkingLeg) ? model.activeBeaconIndex : nil,
+                                 phoneLocation: model.currentLocation, telemetry: model.mapTelemetry,
+                                 journey: model.journeyPlan, journeyLegIndex: model.journeyPhase.legIndex)
                         .id(route.id)
                         .padding(.bottom, routePanelHeight)
                         .ignoresSafeArea()
@@ -69,6 +70,7 @@ struct PointHomeView: View {
         .sheet(isPresented: $showDeviceSetup) { DeviceSetupView(connection: deviceConnection) }
         .fullScreenCover(isPresented: $showBeaconTest) { CameraBeaconTestView() }
         .sheet(isPresented: Binding(get: { model.stage == .choosing }, set: { if !$0 && model.stage == .choosing { model.cancel() } })) { destinationSheet }
+        .sheet(isPresented: Binding(get: { model.stage == .journeyChoice }, set: { if !$0 && model.stage == .journeyChoice { model.cancel() } })) { journeySheet }
         .onAppear {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--preview-point-ai") { model.previewPointAI() }
@@ -124,6 +126,8 @@ struct PointHomeView: View {
                         prompt: model.stage == .clarifying || (recording && model.transcript.isEmpty) ? model.followUpPrompt : nil,
                         spokenReply: model.displayedReply,
                         needsConfirmation: model.needsConfirmation,
+                        confirmTitle: model.pendingTransitOffer ? "Take the T or bus" : "Yes, that's right",
+                        declineTitle: model.pendingTransitOffer ? "I'll walk" : "Change destination",
                         onConfirm: { model.confirmDestination() },
                         onDecline: { model.declineDestination() },
                         onSpeak: { model.microphone() },
@@ -188,7 +192,7 @@ struct PointHomeView: View {
                 Spacer()
                 deviceSetupButton
                     .background(PointTheme.background, in: Circle())
-                Text(model.isDemo ? "Preview" : "Walking")
+                Text(model.isDemo ? "Preview" : model.journeyPlan != nil ? "Transit" : "Walking")
                     .font(.subheadline.weight(.medium))
                     .padding(.horizontal, 16).padding(.vertical, 12)
                     .background(PointTheme.background, in: Capsule())
@@ -209,21 +213,23 @@ struct PointHomeView: View {
                         .font(.largeTitle).foregroundStyle(PointTheme.action)
                         .accessibilityHidden(true)
                 }
+                if model.journeyPlan != nil { journeyLegs }
                 Divider()
+                if model.journeyStarted, model.journeyPlan != nil { journeyControls }
                 if model.journeyStarted {
-                    if !model.isDemo, model.usePhoneAsGlove {
+                    if !model.isDemo, model.usePhoneAsGlove, model.journeyPlan == nil || (model.isWalkingLeg && !model.awaitingSignal) {
                         PhonePointingStatusView(tester: model.phoneTester, beaconIndex: model.activeBeaconIndex,
                                                 beaconCount: model.route?.beacons.count ?? 0, arrived: model.journeyState == .arrived)
                         Button("Test vibration") { model.phoneTester.testVibration() }
                             .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
-                        if model.journeyState != .arrived {
+                        if model.journeyState != .arrived, model.journeyPlan == nil {
                             Button(model.journeyState == .paused ? "Resume pointing" : "Pause pointing") {
                                 if model.journeyState == .paused { model.resumeJourney() }
                                 else { model.pauseJourney() }
                             }
                             .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
                         }
-                    } else {
+                    } else if model.journeyPlan == nil {
                         Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : "Glove direction feedback is not available yet",
                               systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
                             .font(.subheadline.weight(.medium))
@@ -232,7 +238,7 @@ struct PointHomeView: View {
                         Toggle("Simulate correct pointing", isOn: Binding(get: { model.pointingAligned }, set: { model.setDemoAlignment($0) }))
                             .font(.subheadline)
                     }
-                    Button("End walk") { model.cancel() }.font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
+                    Button(model.journeyPlan != nil ? "End trip" : "End walk") { model.cancel() }.font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
                 } else {
                     if !model.isDemo {
                         Toggle("Phone vibration guidance", isOn: $model.usePhoneAsGlove)
@@ -245,7 +251,7 @@ struct PointHomeView: View {
                     }
                     HStack(spacing: 16) {
                         Button { model.startJourney() } label: {
-                            HStack { Text(model.isDemo ? "Try the walk" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right").accessibilityHidden(true) }
+                            HStack { Text(model.isDemo ? "Try the walk" : model.journeyPlan != nil ? "Start trip" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right").accessibilityHidden(true) }
                                 .font(.body.weight(.semibold)).padding(.horizontal, 20).frame(minHeight: 54)
                                 .foregroundStyle(.white).background(PointTheme.accent, in: Capsule())
                         }
@@ -267,6 +273,116 @@ struct PointHomeView: View {
                     Color.clear.preference(key: RoutePanelHeightKey.self, value: geometry.size.height)
                 }
             }
+        }
+    }
+
+    /// The journey's legs, with the current one highlighted. Ride legs show the line colour.
+    private var journeyLegs: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let plan = model.journeyPlan {
+                ForEach(Array(plan.legs.enumerated()), id: \.offset) { index, leg in
+                    let isCurrent = model.journeyPhase.legIndex == index
+                    let isPassed = model.journeyPhase.legIndex.map { index < $0 } ?? false
+                    HStack(spacing: 8) {
+                        switch leg {
+                        case .walk(let walk):
+                            Image(systemName: "figure.walk").frame(width: 20)
+                            Text("Walk to \(walk.destinationName)")
+                        case .ride(let ride):
+                            Image(systemName: ride.route.isBus ? "bus.fill" : "tram.fill").foregroundStyle(ride.route.isBus ? Color(red: 0.29, green: 0.44, blue: 0.65) : Color(hex: ride.route.colorHex)).frame(width: 20)
+                            Text("\(ride.route.name) toward \(ride.headsign) · \(ride.stopsRidden) \(ride.stopsRidden == 1 ? "stop" : "stops") to \(ride.alight.name)")
+                        case .transfer(let station):
+                            Image(systemName: "arrow.triangle.swap").frame(width: 20)
+                            Text("Change at \(station.name)")
+                        }
+                    }
+                    .font(.subheadline.weight(isCurrent ? .semibold : .regular))
+                    .foregroundStyle(isPassed ? .secondary : .primary)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(isCurrent ? .isSelected : [])
+                }
+                if let alert = model.transitAlerts.first {
+                    Label(alert.header, systemImage: alert.isElevatorClosure ? "figure.roll" : "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                }
+            }
+        }
+    }
+
+    /// Phase text plus the manual overrides that back up automatic boarding/alighting.
+    private var journeyControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(model.journeyStatusText, systemImage: journeyGlyph)
+                .font(.subheadline.weight(.medium))
+                .contentTransition(.opacity)
+                .animation(.easeOut(duration: 0.2), value: model.journeyStatusText)
+                .accessibilityAddTraits(.updatesFrequently)
+            HStack(spacing: 12) {
+                switch model.journeyPhase {
+                case .walking where model.journeyPhase.legIndex.map({ $0 + 1 < (model.journeyPlan?.legs.count ?? 0) }) == true:
+                    journeyButton("I'm at the stop") { model.confirmAtStop() }
+                case .waitingAtStop, .vehicleArriving:
+                    journeyButton("I'm on board") { model.confirmBoarded() }
+                case .riding(_, _, false, _):
+                    journeyButton("I'm on board") { model.confirmBoarded() }
+                    journeyButton("Not on board") { model.notOnBoard() }
+                case .riding, .alighting:
+                    journeyButton("I'm off") { model.confirmAlighted() }
+                case .needsReplan:
+                    journeyButton("Replan from here") { model.replanJourney() }
+                default: EmptyView()
+                }
+            }
+        }
+    }
+
+    private var journeyGlyph: String {
+        switch model.journeyPhase {
+        case .walking: return model.awaitingSignal ? "antenna.radiowaves.left.and.right.slash" : "figure.walk"
+        case .waitingAtStop: return model.liveTransitData ? "clock" : "antenna.radiowaves.left.and.right.slash"
+        case .vehicleArriving: return "bell.fill"
+        case .riding(_, _, _, let tracking): return tracking == .lost ? "questionmark.circle" : "tram.fill"
+        case .alighting: return "arrow.down.right.circle.fill"
+        case .needsReplan: return "exclamationmark.triangle.fill"
+        case .arrived: return "flag.checkered"
+        case .idle: return "circle"
+        }
+    }
+
+    private func journeyButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+            .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+    }
+
+    private var journeySheet: some View {
+        NavigationStack {
+            List {
+                Section { Text(model.transcript).foregroundStyle(.secondary) }
+                ForEach(model.journeyCandidates) { plan in
+                    Button { model.selectJourney(plan) } label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 6) {
+                                ForEach(Array(plan.legs.enumerated()), id: \.offset) { _, leg in
+                                    switch leg {
+                                    case .walk: Image(systemName: "figure.walk")
+                                    case .ride(let ride):
+                                        Label(ride.route.name, systemImage: ride.route.isBus ? "bus.fill" : "tram.fill")
+                                            .font(.caption.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 4)
+                                            .foregroundStyle(.white).background(ride.route.isBus ? Color(red: 0.29, green: 0.44, blue: 0.65) : Color(hex: ride.route.colorHex), in: Capsule())
+                                    case .transfer: Image(systemName: "arrow.triangle.swap")
+                                    }
+                                }
+                            }
+                            .accessibilityHidden(true)
+                            Text(plan.summary).font(.subheadline).foregroundStyle(.primary)
+                        }.padding(.vertical, 6)
+                    }
+                }
+                Section { Text("MBTA live data · Apple Maps walking").font(.caption).foregroundStyle(.secondary) }
+            }
+            .navigationTitle("Take this route?")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { model.cancel() } } }
         }
     }
 
