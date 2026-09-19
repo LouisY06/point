@@ -9,9 +9,11 @@ struct PointHomeView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .largeTitle) private var titleSize = 36
+    @State private var routePanelHeight: CGFloat = 300
     @State private var reveal: CGFloat = 0
     @State private var showTyping = false
     @State private var showDeviceSetup = false
+    @State private var showBeaconTest = false
     @State private var typedDestination = ""
     @State private var voiceCenter = CGPoint.zero
     @FocusState private var typingFocused: Bool
@@ -26,15 +28,17 @@ struct PointHomeView: View {
                 PointTheme.background.ignoresSafeArea()
                 HomeMapBackdrop(isActive: model.stage != .route && !showTyping && !showDeviceSetup && model.stage != .choosing)
                     .ignoresSafeArea().opacity(1 - reveal)
-                home(geometry: geometry)
+                home
                     .scaleEffect(reduceMotion ? 1 : 1 + reveal * 0.42, anchor: .init(x: 0.54, y: 0.6))
                     .opacity(1 - reveal)
                     .allowsHitTesting(model.stage != .route)
                     .accessibilityHidden(model.stage == .route)
 
                 if let route = model.route, model.stage == .route {
-                    RouteMapView(route: route)
-                        .padding(.bottom, model.journeyStarted ? 300 : 228)
+                    RouteMapView(route: route, activeBeaconIndex: model.journeyStarted ? model.activeBeaconIndex : nil,
+                                 phoneLocation: model.currentLocation, telemetry: model.mapTelemetry)
+                        .id(route.id)
+                        .padding(.bottom, routePanelHeight)
                         .ignoresSafeArea()
                         .scaleEffect(reduceMotion ? 1 : 1.12 - reveal * 0.12)
                         .mask {
@@ -48,75 +52,112 @@ struct PointHomeView: View {
             }
             .coordinateSpace(name: "screen")
         }
-        .tint(PointTheme.accent)
+        .tint(PointTheme.action)
         .onChange(of: model.stage) { _, stage in
             withAnimation(reduceMotion ? .easeOut(duration: 0.18) : transitionAnimation) {
                 reveal = stage == .route ? 1 : 0
             }
         }
         .onChange(of: scenePhase) { _, phase in
+            if phase == .active { model.sceneActive() }
             if phase != .active { model.sceneInactive() }
             if phase == .background { deviceConnection.enteredBackground() }
         }
+        .onPreferenceChange(RoutePanelHeightKey.self) { routePanelHeight = $0 }
+        .onChange(of: showDeviceSetup) { _, shown in if shown { model.pauseJourney() } }
         .sheet(isPresented: $showTyping) { typingSheet }
         .sheet(isPresented: $showDeviceSetup) { DeviceSetupView(connection: deviceConnection) }
-        .sheet(isPresented: Binding(get: { model.stage == .choosing }, set: { if !$0 && model.stage == .choosing { model.stage = .home } })) { destinationSheet }
-        .alert("One moment", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
-            Button("OK", role: .cancel) { model.message = nil }
-        } message: { Text(model.message ?? "") }
+        .fullScreenCover(isPresented: $showBeaconTest) { CameraBeaconTestView() }
+        .sheet(isPresented: Binding(get: { model.stage == .choosing }, set: { if !$0 && model.stage == .choosing { model.cancel() } })) { destinationSheet }
         .onAppear {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--preview-point-ai") { model.previewPointAI() }
+            #endif
             if ProcessInfo.processInfo.arguments.contains("--preview-route") { model.preview() }
             if ProcessInfo.processInfo.arguments.contains("--device-setup") { showDeviceSetup = true }
+            if ProcessInfo.processInfo.arguments.contains("--test-beacons") { showBeaconTest = true }
         }
         .task {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--preview-point-ai") { return }
+            #endif
             // Microphone, speech, location, then Bluetooth: iOS queues the prompts in order.
             await model.requestPermissions()
             deviceConnection.prepare()
         }
     }
 
-    private func home(geometry: GeometryProxy) -> some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                HStack(alignment: .center) {
-                    wordmark
-                    Spacer()
-                    deviceSetupButton
-                }
-                .padding(.top, 14)
-                .padding(.horizontal, 28)
-
-                VStack(alignment: .center, spacing: 12) {
-                    Text("Where to?")
-                        .font(.system(size: titleSize, weight: .medium, design: .default))
-                        .tracking(-0.7)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .contentTransition(.opacity)
-                        .accessibilityAddTraits(.isHeader)
-                        .opacity(model.stage == .home ? 1 : 0)
-                        .accessibilityHidden(model.stage != .home)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 36)
-
-                HandVoiceInteraction(
-                    active: model.stage != .home,
-                    listening: recording,
-                    searching: searching,
-                    transcript: model.transcript,
-                    isDemo: model.isDemo,
-                    onSpeak: { model.microphone() },
-                    onFinish: { model.microphone() },
-                    onCancel: { model.cancel() },
-                    onType: { model.cancel(); showTyping = true },
-                    onVoiceCenter: { if model.stage != .route { voiceCenter = $0 } }
-                )
-                .padding(.top, 16)
+    private var home: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 8) {
+                wordmark
+                Spacer()
+                if model.stage == .home { beaconTestButton }
+                deviceSetupButton
             }
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .padding(.top, 14)
+            .padding(.horizontal, 28)
             .frame(maxWidth: 520)
-            .frame(maxWidth: .infinity)
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    VStack(alignment: .center, spacing: 12) {
+                        Text("Where to?")
+                            .font(.system(size: titleSize, weight: .medium, design: .default))
+                            .tracking(-0.7)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .contentTransition(.opacity)
+                            .accessibilityAddTraits(.isHeader)
+                            .opacity(model.stage == .home ? 1 : 0)
+                            .accessibilityHidden(model.stage != .home)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 36)
+
+                    HandVoiceInteraction(
+                        active: model.stage != .home,
+                        listening: recording,
+                        searching: searching,
+                        transcript: model.transcript,
+                        isDemo: model.isDemo,
+                        prompt: model.stage == .clarifying || (recording && model.transcript.isEmpty) ? model.followUpPrompt : nil,
+                        spokenReply: model.displayedReply,
+                        needsConfirmation: model.needsConfirmation,
+                        onConfirm: { model.confirmDestination() },
+                        onDecline: { model.declineDestination() },
+                        onSpeak: { model.microphone() },
+                        onFinish: { model.microphone() },
+                        onCancel: { model.cancel() },
+                        onType: { model.prepareTypedReply(); typedDestination = ""; showTyping = true },
+                        onVoiceCenter: { if model.stage != .route { voiceCenter = $0 } }
+                    )
+                    .padding(.top, 16)
+                }
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         }
-        .scrollIndicators(.hidden)
+    }
+
+    private var beaconTestButton: some View {
+        Button { model.openBeaconTest(); showBeaconTest = true } label: {
+            ViewThatFits(in: .horizontal) {
+                Label("Test beacons", systemImage: "viewfinder")
+                    .fixedSize()
+                Image(systemName: "viewfinder")
+                    .frame(minWidth: 24)
+            }
+            .font(.subheadline.weight(.medium))
+            .frame(minHeight: 48)
+            .padding(.horizontal, 12)
+            .foregroundStyle(.white)
+            .background(.black.opacity(0.8), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Test beacons")
     }
 
     private var wordmark: some View {
@@ -128,7 +169,7 @@ struct PointHomeView: View {
     }
 
     private var deviceSetupButton: some View {
-        Button { if recording || searching { model.cancel() }; showDeviceSetup = true } label: {
+        Button { model.openDeviceSetup(); showDeviceSetup = true } label: {
             Image(systemName: deviceConnection.isConnected ? "antenna.radiowaves.left.and.right" : "hand.raised.slash")
                 .font(.body).foregroundStyle(.primary)
                 .frame(width: 48, height: 48)
@@ -165,19 +206,42 @@ struct PointHomeView: View {
                     }
                     Spacer(minLength: 12)
                     Image(systemName: "location.north.circle")
-                        .font(.largeTitle).foregroundStyle(PointTheme.accent)
+                        .font(.largeTitle).foregroundStyle(PointTheme.action)
                 }
                 Divider()
                 if model.journeyStarted {
-                    Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : deviceConnection.isConnected ? "Device linked · Direction feedback not available yet" : "Connect your glove to feel direction",
-                          systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
-                        .font(.subheadline.weight(.medium))
+                    if !model.isDemo, model.usePhoneAsGlove {
+                        PhonePointingStatusView(tester: model.phoneTester, beaconIndex: model.activeBeaconIndex,
+                                                beaconCount: model.route?.beacons.count ?? 0, arrived: model.journeyState == .arrived)
+                        Button("Test vibration") { model.phoneTester.testVibration() }
+                            .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
+                        if model.journeyState != .arrived {
+                            Button(model.journeyState == .paused ? "Resume pointing" : "Pause pointing") {
+                                if model.journeyState == .paused { model.resumeJourney() }
+                                else { model.pauseJourney() }
+                            }
+                            .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                    } else {
+                        Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : "Glove direction feedback is not available yet",
+                              systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
+                            .font(.subheadline.weight(.medium))
+                    }
                     if model.isDemo {
                         Toggle("Simulate correct pointing", isOn: Binding(get: { model.pointingAligned }, set: { model.setDemoAlignment($0) }))
                             .font(.subheadline)
                     }
                     Button("End walk") { model.cancel() }.font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
                 } else {
+                    if !model.isDemo {
+                        Toggle("Phone vibration guidance", isOn: $model.usePhoneAsGlove)
+                            .font(.subheadline.weight(.medium))
+                        if model.usePhoneAsGlove {
+                            Text("Point the camera end toward the highlighted beacon, screen down. Full strength within 15°; a gradual fade out to 60°. Two pulses mean beacon reached, then follow the next.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                     HStack(spacing: 16) {
                         Button { model.startJourney() } label: {
                             HStack { Text(model.isDemo ? "Try the walk" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right") }
@@ -191,12 +255,17 @@ struct PointHomeView: View {
                         }.accessibilityLabel("Change destination")
                     }
                 }
-                Text(model.isDemo ? "Sample route · Simulated glove" : deviceConnection.isConnected ? "Bluetooth verified · Sensor firmware pending" : "Glove not connected")
+                Text(model.isDemo ? "Sample route · Simulated glove" : model.usePhoneAsGlove ? "Route tracks while locked · Unlock for phone vibration" : deviceConnection.isConnected ? "Bluetooth verified · Sensor firmware pending" : "Glove not connected")
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
             }
             .padding(26)
             .background(PointTheme.background)
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(key: RoutePanelHeightKey.self, value: geometry.size.height)
+                }
+            }
         }
     }
 
@@ -224,6 +293,9 @@ struct PointHomeView: View {
         NavigationStack {
             List {
                 Section { Text(model.transcript).foregroundStyle(.secondary) }
+                Section {
+                    Button { model.microphone() } label: { Label("Reply by voice", systemImage: "mic.fill") }
+                }
                 if model.candidates.isEmpty {
                     ContentUnavailableView.search(text: model.transcript)
                 } else {
@@ -300,7 +372,7 @@ private struct HomeMapBackdrop: View {
             .brightness(0.04)
             .blur(radius: 2)
             .overlay(Color.black.opacity(0.16))
-            .overlay { MapAtmosphere(isActive: isActive).opacity(0.72) }
+            .overlay { MapAtmosphere(isActive: isActive).opacity(0.82) }
             .overlay(alignment: .bottom) {
                 // Keep the provider identified despite the intentionally blurred backdrop.
                 Text("Map data © Apple").font(.caption2).foregroundStyle(Color.white.opacity(0.6)).padding(.bottom, 6)
@@ -329,16 +401,16 @@ private struct MapAtmosphere: View {
                 light(in: &context, size: size,
                       center: CGPoint(x: 0.18 + 0.22 * sin(phase), y: 0.30 + 0.16 * cos(phase * 0.8)),
                       scale: CGSize(width: 0.95, height: 0.60), angle: -0.55,
-                      color: Color(red: 0.54, green: 0.64, blue: 0.70), opacity: 0.42)
+                      color: Color(red: 0.54, green: 0.64, blue: 0.70), opacity: 0.45)
                 light(in: &context, size: size,
                       center: CGPoint(x: 0.82 + 0.18 * cos(phase * 0.7), y: 0.68 + 0.17 * sin(phase * 0.9)),
                       scale: CGSize(width: 0.90, height: 0.58), angle: -0.55,
-                      color: Color(red: 0.68, green: 0.53, blue: 0.34), opacity: 0.31)
+                      color: Color(red: 0.68, green: 0.53, blue: 0.34), opacity: 0.36)
                 // A broad, feathered reflection gives a satin sheen rather than sparkles.
                 light(in: &context, size: size,
                       center: CGPoint(x: 0.5 + 0.32 * sin(phase * 0.6 + 1), y: 0.48 + 0.20 * cos(phase * 0.7)),
-                      scale: CGSize(width: 0.22, height: 0.95), angle: -0.55 + 0.15 * sin(phase * 0.5),
-                      color: Color(red: 0.84, green: 0.87, blue: 0.86), opacity: 0.23)
+                      scale: CGSize(width: 0.25, height: 0.95), angle: -0.55 + 0.15 * sin(phase * 0.5),
+                      color: Color(red: 0.84, green: 0.87, blue: 0.86), opacity: 0.28)
             }
         }
         .overlay {
@@ -384,4 +456,9 @@ private struct RouteLoadingGlyph: View {
         }
         .accessibilityLabel("Preparing route")
     }
+}
+
+private struct RoutePanelHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 300
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }

@@ -6,6 +6,12 @@ public enum JourneyState: String { case idle, navigating, paused, arrived }
 public enum LocationQuality: String { case unavailable, usable, degraded }
 public enum SessionError: Error { case invalidRoute }
 
+/// Emitted once, only after distinct accurate GPS fixes confirm this beacon was reached.
+public struct BeaconArrival: Equatable {
+    public let index: Int
+    public let isDestination: Bool
+}
+
 /// New route lifecycle. Advancement never waits for speech or a motor acknowledgement.
 @MainActor public final class NavigationSession: ObservableObject {
     @Published public private(set) var state: JourneyState = .idle
@@ -32,7 +38,7 @@ public enum SessionError: Error { case invalidRoute }
                     activeBeaconIndex: route == nil ? nil : beaconIndex)
     }
 
-    public func start(_ route: RoutePlan) throws {
+    public func start(_ route: RoutePlan, at initialLocation: CLLocation? = nil, now: Date = Date()) throws {
         guard route.checkpoints.count >= 2, !route.beacons.isEmpty,
               route.beacons.last?.isFinalDestination == true,
               route.checkpoints.allSatisfy({ CLLocationCoordinate2DIsValid($0.coordinate) }),
@@ -41,6 +47,15 @@ public enum SessionError: Error { case invalidRoute }
         }
         self.route = route
         beaconIndex = 0
+        // Skip the origin marker only when a fresh fix confirms we're already there.
+        if let fix = initialLocation, route.beacons.count > 1,
+           CLLocationCoordinate2DIsValid(fix.coordinate),
+           (0...25).contains(fix.horizontalAccuracy), (0...5).contains(now.timeIntervalSince(fix.timestamp)),
+           !route.beacons[0].isFinalDestination,
+           RouteGeometry.distanceMeters(route.beacons[0].coordinate, route.checkpoints[0].coordinate) < 1.5,
+           RouteGeometry.distanceMeters(fix.coordinate, route.beacons[0].coordinate) <= max(8, fix.horizontalAccuracy) {
+            beaconIndex = 1
+        }
         location = nil
         locationQuality = .unavailable
         lastProcessedFix = nil
@@ -74,8 +89,8 @@ public enum SessionError: Error { case invalidRoute }
         lastProcessedFix = nil
     }
 
-    public func updateLocation(_ fix: CLLocation, now: Date = Date()) {
-        guard state == .navigating else { return }
+    @discardableResult public func updateLocation(_ fix: CLLocation, now: Date = Date()) -> BeaconArrival? {
+        guard state == .navigating else { return nil }
         let age = now.timeIntervalSince(fix.timestamp)
         guard CLLocationCoordinate2DIsValid(fix.coordinate), fix.horizontalAccuracy.isFinite,
               fix.horizontalAccuracy >= 0, fix.horizontalAccuracy <= 25,
@@ -83,30 +98,32 @@ public enum SessionError: Error { case invalidRoute }
             locationQuality = .degraded
             arrivalHits = 0
             offRouteHits = 0
-            return
+            return nil
         }
-        guard lastProcessedFix.map({ fix.timestamp > $0 }) ?? true else { return }
+        guard lastProcessedFix.map({ fix.timestamp > $0 }) ?? true else { return nil }
         location = fix
         locationQuality = .usable
         lastProcessedFix = fix.timestamp
-        guard let route, let target = activeBeacon else { return }
+        guard let route, let target = activeBeacon else { return nil }
 
-        let offRoute = distanceToPath(fix.coordinate, checkpoints: route.checkpoints)
-        offRouteHits = offRoute > max(25, 2 * fix.horizontalAccuracy) ? offRouteHits + 1 : 0
+        let offRoute = isFarFromPath(fix.coordinate, checkpoints: route.checkpoints, beyond: max(25, 2 * fix.horizontalAccuracy))
+        offRouteHits = offRoute ? offRouteHits + 1 : 0
         rerouteRequired = offRouteHits >= 3
-        guard !rerouteRequired else { arrivalHits = 0; return }
+        guard !rerouteRequired else { arrivalHits = 0; return nil }
 
         let distance = RouteGeometry.distanceMeters(fix.coordinate, target.coordinate)
         // Tight accuracy is needed before advancing, even when GPS is adequate for map display.
         arrivalHits = distance <= arrivalRadiusMeters && fix.horizontalAccuracy <= arrivalRadiusMeters
             ? arrivalHits + 1 : 0
-        guard arrivalHits >= 2 else { return }
+        guard arrivalHits >= 2 else { return nil }
         arrivalHits = 0
+        let arrival = BeaconArrival(index: beaconIndex, isDestination: target.isFinalDestination)
         if target.isFinalDestination {
             state = .arrived
         } else {
             beaconIndex += 1
         }
+        return arrival
     }
 
     /// Use only while a journey is active. The caller must discard stale asynchronous responses.
@@ -115,10 +132,12 @@ public enum SessionError: Error { case invalidRoute }
         try start(replacement) // New route numbering starts at zero, never at the old route's index.
     }
 
-    private func distanceToPath(_ point: CLLocationCoordinate2D, checkpoints: [RouteCheckpoint]) -> Double {
+    private func isFarFromPath(_ point: CLLocationCoordinate2D, checkpoints: [RouteCheckpoint], beyond threshold: Double) -> Bool {
         let metersPerDegree = 111_195.0
         let longitudeScale = cos(point.latitude * .pi / 180) * metersPerDegree
-        return zip(checkpoints, checkpoints.dropFirst()).map { first, second in
+        let thresholdSquared = threshold * threshold
+        // We only need inside/outside, not a distance array for every checkpoint.
+        for (first, second) in zip(checkpoints, checkpoints.dropFirst()) {
             let ax = (first.coordinate.longitude - point.longitude) * longitudeScale
             let ay = (first.coordinate.latitude - point.latitude) * metersPerDegree
             let bx = (second.coordinate.longitude - point.longitude) * longitudeScale
@@ -126,7 +145,9 @@ public enum SessionError: Error { case invalidRoute }
             let dx = bx - ax, dy = by - ay
             let lengthSquared = dx * dx + dy * dy
             let t = lengthSquared > 0 ? min(1, max(0, -(ax * dx + ay * dy) / lengthSquared)) : 0
-            return hypot(ax + t * dx, ay + t * dy)
-        }.min() ?? .infinity
+            let x = ax + t * dx, y = ay + t * dy
+            if x * x + y * y <= thresholdSquared { return false }
+        }
+        return true
     }
 }

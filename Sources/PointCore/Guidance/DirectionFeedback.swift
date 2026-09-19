@@ -29,6 +29,7 @@ public struct DirectionFeedback {
     public let status: FeedbackStatus
     public let angularErrorDegrees: Double?
     public let distanceToBeaconMeters: Double?
+    public var conservativeErrorDegrees: Double? = nil
     public var shouldConfirm: Bool { status == .aligned }
 }
 
@@ -93,7 +94,8 @@ public struct DirectionFeedbackEngine {
             candidateSince = nil
         }
         return DirectionFeedback(status: aligned ? .aligned : candidateSince == nil ? .offDirection : .checking,
-                                 angularErrorDegrees: error, distanceToBeaconMeters: distance)
+                                 angularErrorDegrees: error, distanceToBeaconMeters: distance,
+                                 conservativeErrorDegrees: conservativeError)
     }
 
     public static func signedAngle(_ degrees: Double) -> Double {

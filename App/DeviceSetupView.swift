@@ -85,7 +85,7 @@ struct DeviceSetupView: View {
                         Button(connection.phase == .idle && connection.message == nil && connection.devices.isEmpty
                                ? "Scan for device" : "Scan again") { connection.scan() }
                             .frame(maxWidth: .infinity, minHeight: 48)
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(PointFilledButtonStyle())
                     }
                     if connection.isWorking || connection.hasLink {
                         Button(connection.isConnected ? "Disconnect" : "Cancel", role: .cancel) { connection.disconnect() }
@@ -104,7 +104,7 @@ struct DeviceSetupView: View {
             }
             .onDisappear { connection.setupDismissed() }
         }
-        .tint(PointTheme.accent)
+        .tint(PointTheme.action)
     }
 
     private var progressLabel: String {

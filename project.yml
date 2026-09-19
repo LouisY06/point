@@ -11,6 +11,12 @@ targets:
     type: application
     platform: iOS
     sources: [App]
+    info:
+      path: App/Info.plist
+      properties:
+        UIBackgroundModes: [location]
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     dependencies:
       - package: PointCore
     settings:
@@ -18,6 +24,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.point.navigator
         SWIFT_VERSION: "5.0"
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: Place nearby test beacons using on-device camera tracking. No video is recorded.
+        INFOPLIST_KEY_NSMotionUsageDescription: Check the screen-down pointing grip when testing navigation with your phone.
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Say where you want to go to search for a destination.
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Show your words on screen as you say where you want to go.
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: Your location guides you toward the next point on your walking route.

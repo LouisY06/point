@@ -11,9 +11,26 @@ public struct PlaceCandidate: Identifiable {
     public let name: String
     public let address: String
     public let coordinate: CLLocationCoordinate2D
+    /// Street only for spoken confirmation; the full address remains available visually.
+    public let streetAddress: String?
+    public let city: String?
+    public let cityAliases: [String]
+    public let isArea: Bool
 
-    public init(id: String, name: String, address: String, coordinate: CLLocationCoordinate2D) {
+    public init(id: String, name: String, address: String, coordinate: CLLocationCoordinate2D,
+                streetAddress: String? = nil, city: String? = nil, cityAliases: [String] = [], isArea: Bool = false) {
         self.id = id; self.name = name; self.address = address; self.coordinate = coordinate
+        self.streetAddress = streetAddress
+        self.city = city; self.isArea = isArea
+        self.cityAliases = cityAliases
+    }
+}
+
+public enum NavigationSpeech {
+    public static func routeReady(for place: PlaceCandidate) -> String {
+        let street = place.streetAddress?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let location = street.isEmpty ? "" : " on \(street)"
+        return "Your route to \(place.name)\(location) is ready. Tap Start when you're ready."
     }
 }
 

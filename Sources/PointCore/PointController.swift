@@ -26,9 +26,9 @@ import Foundation
         glove.onEvent = { [weak self] event in self?.receive(event) }
     }
 
-    public func start(_ route: RoutePlan) throws {
+    public func start(_ route: RoutePlan, at location: CLLocation? = nil) throws {
         routeRequestID = UUID()
-        try navigation.start(route)
+        try navigation.start(route, at: location)
         resetFeedback()
         tick()
     }
@@ -53,9 +53,10 @@ import Foundation
         try start(replacement)
     }
 
-    public func updateLocation(_ location: CLLocation, now: Date = Date()) {
-        navigation.updateLocation(location, now: now)
+    @discardableResult public func updateLocation(_ location: CLLocation, now: Date = Date()) -> BeaconArrival? {
+        let arrival = navigation.updateLocation(location, now: now)
         tick(now: now)
+        return arrival
     }
 
     public func receive(_ event: GloveEvent, now: Date = Date()) {

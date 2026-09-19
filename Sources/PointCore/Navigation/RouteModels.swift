@@ -46,12 +46,14 @@ public struct RoutePlan {
     public let destinationName: String
     public let checkpoints: [RouteCheckpoint]
     public let beacons: [PingTarget]
+    public let expectedTravelTime: TimeInterval?
 
-    public init(destinationName: String, checkpoints: [RouteCheckpoint], beacons: [PingTarget]) {
+    public init(destinationName: String, checkpoints: [RouteCheckpoint], beacons: [PingTarget], expectedTravelTime: TimeInterval? = nil) {
         id = UUID()
         self.destinationName = destinationName
         self.checkpoints = checkpoints
         self.beacons = beacons
+        self.expectedTravelTime = expectedTravelTime
     }
 }
 

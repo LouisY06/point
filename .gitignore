@@ -12,3 +12,9 @@ Secrets.swift
 !*.example.xcconfig
 output/
 *.xcresult
+
+# Local animation render checks and inspection frames.
+videos/hand-pull-motion/**/*.log
+videos/hand-pull-motion/**/snapshots/
+videos/hand-pull-motion/renders/encoded-*.png
+videos/hand-pull-motion/renders/tail-alpha.txt

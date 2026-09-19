@@ -1,4 +1,5 @@
 import CoreLocation
+import Contacts
 import MapKit
 
 /// Native Apple Maps search and walking directions; no provider API key is required.
@@ -20,8 +21,15 @@ import MapKit
         return response.mapItems.compactMap { item -> PlaceCandidate? in
             let coordinate = item.placemark.coordinate
             guard CLLocationCoordinate2DIsValid(coordinate) else { return nil }
+            let street: String? = item.placemark.thoroughfare.map { road in
+                [item.placemark.subThoroughfare, road].compactMap { $0 }.joined(separator: " ")
+            }
+            let areas = [item.placemark.locality, item.placemark.subLocality, item.placemark.administrativeArea, item.placemark.country].compactMap { $0 }
+            let isArea = street == nil && item.pointOfInterestCategory == nil && areas.contains { $0.localizedCaseInsensitiveCompare(item.name ?? "") == .orderedSame }
             return PlaceCandidate(id: UUID().uuidString, name: item.name ?? query,
-                                  address: item.placemark.title ?? "", coordinate: coordinate)
+                                  address: item.placemark.title ?? "", coordinate: coordinate, streetAddress: street,
+                                  city: item.placemark.postalAddress?.city ?? item.placemark.locality,
+                                  cityAliases: [item.placemark.locality, item.placemark.postalAddress?.city, item.placemark.subLocality].compactMap { $0 }, isArea: isArea)
         }.prefix(10).map { $0 }
     }
 
@@ -43,7 +51,31 @@ import MapKit
             DirectionsStepRecord(htmlInstructions: $0.instructions,
                                  coordinates: Self.coordinates(in: $0.polyline), distanceMeters: $0.distance)
         }
-        return try Self.makeRoute(steps: steps, fallbackCoordinates: Self.coordinates(in: route.polyline), name: name)
+        let coordinates = Self.coordinates(in: route.polyline)
+        let processing = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let plan = try Self.makeRoute(steps: steps, fallbackCoordinates: coordinates, name: name)
+            try Task.checkCancellation()
+            return plan
+        }
+        let plan = try await withTaskCancellationHandler {
+            try await processing.value
+        } onCancel: { processing.cancel() }
+        try Task.checkCancellation()
+        return RoutePlan(destinationName: plan.destinationName, checkpoints: plan.checkpoints, beacons: plan.beacons,
+                         expectedTravelTime: route.expectedTravelTime)
+    }
+
+    public struct CityContext {
+        public let name: String?
+        public let aliases: [String]
+    }
+
+    public func city(near location: CLLocation) async throws -> CityContext? {
+        try Task.checkCancellation()
+        guard let place = try await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }
+        return CityContext(name: place.postalAddress?.city ?? place.locality,
+                           aliases: [place.locality, place.postalAddress?.city, place.subLocality].compactMap { $0 })
     }
 
     static func coordinates(in polyline: MKPolyline) -> [CLLocationCoordinate2D] {
@@ -56,7 +88,7 @@ import MapKit
 
     /// Zero-length departure/arrival steps are valid in MapKit. Keep their points when
     /// present; if no step has path geometry, use the complete route polyline instead.
-    static func makeRoute(steps: [DirectionsStepRecord], fallbackCoordinates: [CLLocationCoordinate2D],
+    nonisolated static func makeRoute(steps: [DirectionsStepRecord], fallbackCoordinates: [CLLocationCoordinate2D],
                           name: String) throws -> RoutePlan {
         let pathSteps = steps.contains(where: { $0.coordinates.count >= 2 }) ? steps : [
             DirectionsStepRecord(htmlInstructions: "Continue toward \(name)",

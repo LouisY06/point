@@ -2,6 +2,10 @@
 
 Updated: September 19, 2026 — Apple Maps migration. This document separates code that exists today from integration work and future design work.
 
+Phone test update: the phone can stand in for the glove with a fixed screen-down/top-edge-forward grip and eased vibration. Apple Maps guidance now has full strength across ±15°, then fades smoothly to zero at ±60°. Outdoor route testing uses GPS/true-north compass; **Test beacons** uses optional ARKit camera placement for 0.5–8 m local tests. Active-target highlighting, phone pause/resume, arrival/status UI and a 20 Hz stale-data loop are wired. Started walking sessions retain GPS progress on inactivity through background location; phone vibration stops until foregrounded. Local AR beacons clear on interruption. A cyan map arrow shows fresh physical top-edge heading, and Test vibration checks the motor independently. Real Apple Maps routes now show beacon progress and play two pulses per confirmed intermediate arrival, then guide toward the next target; three pulses mark the destination. A multi-beacon integration test verifies GPS progression and changed pointing targets. Physical-device verification remains pending. See [phone beacon test instructions and tuning](PHONE_BEACON_TEST.md).
+
+Voice update: the live Apple Speech/OpenAI input flow now has optional ElevenLabs spoken replies, using Caleb and Flash v2.5 with native speech fallback. `.env.example` documents Debug-only configuration. Speech stops on recording, cancel, inactivity and interruption; VoiceOver owns announcements when enabled. See [voice setup](VOICE_SETUP.md). City clarification, route confirmation and follow-up corrections are implemented; unrestricted conversation remains out of scope.
+
 Maps update: map display, destination search, and walking directions now use native Apple MapKit. The Google SDK and key requirements have been removed. Typed destination search needs no API credentials. The microphone now records and transcribes through OpenAI in Debug builds; the scripted demo runs only with the `--preview-route` launch argument.
 
 Bluetooth update: the merged ESP32-C6 echo firmware now has a matching iOS device setup flow. Users can scan, connect, and verify a unique command/status round trip. This remains separate from navigation capabilities, which the firmware does not yet implement. See [device setup](DEVICE_SETUP.md) for the bench test; live board verification is pending.
@@ -18,7 +22,7 @@ Decisions already made:
 - Phone GPS supplies position; the glove supplies its own pointing orientation over Bluetooth Low Energy.
 - We are using the existing algorithm for route geometry, checkpoints, and geographic beacons. The surrounding app, map presentation, voice flow, session control, and glove feedback are being built around it.
 - Vibration means the glove is pointing toward the active beacon. It does not encode left/right turns, walking direction, or obstacle clearance.
-- No camera, computer vision, or palm/fingertip camera hardware.
+- No camera is required for walking navigation or glove hardware. An optional phone-only ARKit test screen uses the camera to place nearby temporary beacons.
 - Keep the home screen minimal: wordmark, short prompt, hand, microphone, typing alternative, and preview.
 - Hardware selection and assembly belong to the hardware team. The app communicates through a replaceable transport interface.
 
@@ -26,7 +30,7 @@ Earlier brainstorming covered rehabilitation, learned gestures, a belt attachmen
 
 ## 2. What partners can run today
 
-The default app runs without provider credentials or glove hardware. Tap the white microphone in the hand or tap Preview:
+The default app records real speech, with live Apple Speech text and optional OpenAI final transcription. Typing works without provider keys. For the staged animation demo, launch with `--preview-route`:
 
 1. The selected sketch hand pinches and pulls in a native transcript banner.
 2. “Take me to Shake Shack” appears word by word.
@@ -35,7 +39,7 @@ The default app runs without provider credentials or glove hardware. Tap the whi
 5. A synthetic Cambridge route appears with a destination panel.
 6. “Try the walk” exposes a simulated pointing toggle. This previews UI and phone haptics; it is not glove telemetry.
 
-The default preview makes no transcription, place-search, or routing requests. Map tiles can still require a network connection. The sample route and store location are synthetic and must not be presented as verified walking directions.
+The staged preview makes no transcription, place-search, or routing requests. Map tiles and an optional spoken sample-route announcement can still require a network connection. The sample route and store location are synthetic and must not be presented as verified walking directions.
 
 Separately, `swift run point-demo` drives the real feedback engine with simulated location and heading samples and prints the resulting motor commands.
 
@@ -46,14 +50,17 @@ Separately, `swift run point-demo` drives the real feedback engine with simulate
 | Home UI | Minimal dark SwiftUI screen; selected sketch hand; embedded microphone with an invisible native hit target; keyboard alternative | Validate small screens, VoiceOver, larger accessibility text, and physical-device playback |
 | Background | Recognizable monochrome map, 2-point blur, drifting silver and muted gold light, soft sheen | Physical-device performance/battery review |
 | Motion | Transparent hand-pull movie, native banner/transcript, loading glyph, eased map portal; Reduce Motion support | Physical-device decoder, power and timing checks |
-| Voice capture | Permission handling, short M4A recording, finish/cancel, 20-second limit, temporary-file cleanup | Live account/device test; interruption and recovery validation |
+| Voice capture | Permission handling, short M4A recording, finish/cancel, three-second observed silence, 60-second limit, temporary-file cleanup | Live account/device test; interruption and recovery validation |
 | Transcription | Injectable OpenAI transcription client | Verify configured model and account access; implement authenticated backend for distribution |
+| Spoken replies | ElevenLabs TTS, native speech fallback, VoiceOver announcements, cancellation and audio interruption handling | Field-test spoken disambiguation, interruptions and timed captions; authenticated backend |
 | Place search | Native Apple Maps text search with a nearby region, up to five candidates, explicit destination selection | Live service and simulator happy path verified; physical-iPhone and permission/no-results/error checks remain |
 | Route fetch | Native Apple Maps walking directions; decoded steps feed the existing algorithm | Live service and simulator route display verified; outdoor comparison and service failure tests remain |
 | Route processing | Polyline decoding, checkpoint resampling, original-corner preservation, turn-beacon extraction | Broader geometry fixtures and field validation |
-| Map | Apple Maps for both live routes and previews; route line, markers, route framing and controls | Bind active beacon, updated route, rerouting, and arrival to live session state |
+| Map | Apple Maps for live routes and previews; route line, active beacon highlight, user location and framing | Wire automatic rerouting and validate outdoor advancement |
 | Navigation session | Start/pause/resume/stop, location quality checks, beacon advancement, arrival, off-route detection | Complete UI wiring and outdoor tuning |
 | Pointing feedback | True-north bearing comparison, uncertainty margin, dwell, hysteresis, stale-data rejection | Real sensor calibration and physical motor tuning |
+| Phone stand-in | Screen-down grip, top-edge pointing, lerped Core Haptics, pause/resume/status, 20 Hz freshness checks | Physical iPhone grip, vibration and outdoor compass verification |
+| Nearby beacons | Camera placement, local AR direction, ordered 35 cm arrival, clear/pause and tracking-loss suppression | Physical iPhone tracking/arrival tests; measure drift and tune thresholds |
 | Glove interface | Navigation transport protocol and simulator; separate CoreBluetooth setup for the ESP32-C6 echo service | Physical board validation; sensor/haptic wire format and navigation adapter |
 | Tests | Offline route, MapKit adapter, feedback, voice and echo-protocol tests; opt-in live MapKit test | Live BLE checks, service mocks, UI lifecycle and outdoor tests |
 | Distribution | Shared Xcode project and reproducible package manifest | Signing/team selection, backend, release configuration, background behavior |
@@ -64,9 +71,9 @@ Separately, `swift run point-demo` drives the real feedback engine with simulate
 
 ### Destination entry
 
-Tap the microphone, speak a destination, and tap again to finish. Apple Speech shows the words live while recording; OpenAI (when configured) supplies the final transcript. Normalize phrases such as “take me to” and “nearest,” search nearby places, and let `DestinationResolver` route directly when the request is unambiguous or ask the user otherwise. Typing remains available for the same search flow. All permissions (microphone, speech, location, Bluetooth) are requested at first launch.
+Tap the microphone and speak a destination. Capture finishes after a short pause; tapping again still finishes immediately. Apple Speech shows the words live while recording; OpenAI (when configured) supplies the final transcript. Normalize phrases such as “take me to” and “nearest,” search nearby places, and let `DestinationResolver` route directly when the request is unambiguous or ask the user otherwise. Typing remains available for the same search flow. All permissions (microphone, speech, location, Bluetooth) are requested at first launch.
 
-The microphone records real audio and transcribes it with a Debug-only key; without a key it asks the user to type. The scripted demo is reachable only through the `--preview-route` launch argument. Typed search already uses real Apple Maps without credentials. The current transcript animation is visual simulation, not streaming speech recognition or generated spoken audio. A conversational LLM, TTS service, and multi-turn dialogue are not implemented.
+The microphone records real audio. Apple Speech provides live text and a fallback final transcript; OpenAI optionally refines the final transcript. The scripted demo is reachable through `--preview-route`. Typed search uses real Apple Maps without credentials. ElevenLabs speaks short app-authored replies, with native speech fallback and VoiceOver announcements. OpenAI interprets constrained navigation follow-ups; route checks remain map-driven. General-purpose chat is not implemented.
 
 ### Route review
 
@@ -80,7 +87,7 @@ Surface disconnected, calibration-needed, uncertain location, reroute-needed, pa
 
 ### Cancel and lifecycle
 
-Cancel recording/search/demo work without allowing stale asynchronous results to reopen a route. Stopping a journey clears navigation state and feedback. The current shell cancels recording or the staged demo when inactive; full active-journey background behavior still needs implementation and testing.
+Cancel recording/search/demo work without allowing stale asynchronous results to reopen a route. Stopping a journey clears navigation state and feedback. The shell cancels recording or the staged demo when inactive and stops phone vibration. Started walks continue GPS progress using background location; foregrounding restores phone pointing. Local AR tests clear their beacons on inactivity. Manual pause, end and arrival disable background location. Physical locked-screen behavior and background glove integration still need testing/work.
 
 ## 5. Architecture and file ownership boundaries
 
@@ -127,6 +134,8 @@ flowchart TD
 
 The app currently orchestrates the search sequence in `PointViewModel`; `VoiceDestination` also contains a separately tested flow. Consolidating this duplication is useful follow-up work, not a completed refactor.
 
+Long-route update: route drawing is cached per route, heading display is isolated and throttled to 10 Hz, walking marker count is bounded to 13 without discarding route beacons, and segmentation runs off the UI thread. Haptics evaluate only the active target. A 361-beacon traversal regression and marker bounds up to 10,000 beacons pass; desktop timings and device-test limits are recorded in [phone beacon tests](PHONE_BEACON_TEST.md#long-routes-and-performance).
+
 ## 6. Existing algorithm and current tuning
 
 ### Route construction
@@ -162,7 +171,7 @@ The algorithm computes the signed difference between the target bearing and glov
 | Minimum interval between pulses | 900 ms |
 | Foreground watchdog expectation | Approximately 10 Hz, plus incoming sensor/location events |
 
-These are prototype defaults, not calibrated hardware specifications. The app shell still needs to schedule the watchdog; event-only evaluation cannot reliably expire stale data when all incoming events stop. Firmware must end every finite pulse locally even if the phone disconnects or suspends.
+These are prototype glove defaults, not calibrated hardware specifications. The real glove integration still needs a watchdog; event-only evaluation cannot expire stale data when all incoming events stop. Phone tests already use a separate 20 Hz foreground loop, grip gate and eased intensity (see the phone test document). Firmware must end every finite pulse locally even if the phone disconnects or suspends.
 
 ## 7. Hardware integration plan
 
@@ -232,7 +241,7 @@ Use separate branches and pull requests. Coordinate before editing `PointViewMod
 - Display pause, arrival, reroute-needed, and real device status.
 - Connect off-route detection to guarded route requests with appropriate retry behavior.
 - Test short supervised walks, nearby turns, GPS uncertainty, stopping mid-request, and reconnects.
-- Decide background/locked-phone behavior explicitly; the current prototype does not implement reliable background navigation.
+- Validate the new background GPS route tracking on a locked phone. Phone haptics remain foreground-only; real glove feedback needs separate background BLE integration.
 
 ### M4 — Presentation and release readiness
 
@@ -243,7 +252,7 @@ Use separate branches and pull requests. Coordinate before editing `PointViewMod
 
 ## 11. Sponsor and demo context
 
-Earlier conversations explored hardware sponsors and voice/AI challenges. Keep the project coherent: choose hardware based on the actual glove, and use OpenAI for the intended voice-to-destination experience. Other voice vendors, sensor-history analytics, rehabilitation coaching, and additional sponsor APIs are not implemented or committed requirements.
+Earlier conversations explored hardware sponsors and voice/AI challenges. Keep the project coherent: choose hardware based on the actual glove, use OpenAI for transcription and destination conversation, and ElevenLabs for spoken replies. Sensor-history analytics, rehabilitation coaching, and additional sponsor APIs are not implemented or committed requirements.
 
 Do not assume earlier challenge/prize discussion establishes eligibility. Before submitting, a teammate should check the current organizer requirements against the hardware and APIs actually used. Preserve a concise record of development work and a working demonstration rather than claiming planned integrations.
 
@@ -270,7 +279,8 @@ Run the network test explicitly with `POINT_TEST_LIVE_MAPS=1 swift test --filter
 | P0 — iOS / live input | Exercise typed search and route selection on an iPhone, then configure and test real OpenAI transcription | A real typed destination and a real utterance each produce a deliberately selected Apple walking route; cancellation and denied permissions recover cleanly |
 | P0 — hardware / BLE | Run the documented ESP32-C6 echo bench test | The phone receives the exact probe reply; power loss, reconnect, missing replies and Bluetooth denial are verified |
 | P0 — firmware + iOS | Define heading/haptic packets and replace the navigation simulator with a real `GloveTransport` | Calibrated true-north heading drives finite physical motor pulses; misalignment, stale data and disconnect stop them |
-| P1 — navigation | Bind the live session to active-beacon highlighting, pause/resume, arrival, device and uncertainty states | UI reflects core changes and cannot continue displaying a replaced route or stale connection |
+| P1 — phone testing | Validate implemented phone grip, vibration, AR placement and phone session UI on-device | Correct pointing strengthens feedback; reverse/upside-down grip does not; local arrival, tracking loss and interruption behavior are observed |
+| P1 — navigation | Extend phone-mode active-beacon, pause/resume, arrival and uncertainty UI to real glove integration | UI reflects core changes and cannot continue displaying a replaced route or stale connection |
 | P1 — navigation | Schedule the foreground ~10 Hz watchdog and connect off-route detection to guarded Apple rerouting | Stale sensors stop feedback without new packets; reroutes reset progress; late requests cannot reopen a stopped journey |
 | P1 — algorithm | Remove optional fixed-distance sampling if no longer useful; handle gradual bends and closely spaced turns | Geometry tests and supervised walks show that sparse targets follow the actual path without cutting corners |
 | P1 — app / hardware | Outdoor accuracy and calibration trials | Recorded results cover turns, arrival, poor GPS, magnetic interference and mounting orientation; thresholds are tuned from evidence |
@@ -278,4 +288,4 @@ Run the network test explicitly with `POINT_TEST_LIVE_MAPS=1 swift test --filter
 | P2 — lifecycle | Implement and validate microphone interruptions and intended background/locked-phone behavior | Phone calls, lock/unlock, app switching and reconnection leave truthful session/feedback state |
 | P2 — design / accessibility | Test hand playback, VoiceOver, larger text, Reduce Motion, contrast and battery use on phones | Findings are documented and blocking issues are fixed |
 
-Not implemented: obstacle detection, camera input, learned gestures, multi-turn conversation, streaming transcription, synthesized spoken replies, and independent-mobility validation. These are not prerequisites for demonstrating typed Apple Maps routing, but must not be presented as working features.
+Not implemented: obstacle detection, learned gestures and independent-mobility validation. Destination conversation now supports clarification, corrections and route confirmation. Camera input exists only for temporary local test beacons; live Apple Speech text and synthesized spoken replies have separate voice implementations. These do not establish validated glove navigation.

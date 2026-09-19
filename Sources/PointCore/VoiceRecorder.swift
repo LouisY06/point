@@ -4,7 +4,7 @@ import Combine
 import Foundation
 import Speech
 
-/// Short, explicit recordings with a live on-device transcript. The view owns start/finish/cancel;
+/// Explicit destination recordings with a live on-device transcript. The view owns start/finish/cancel;
 /// there is no always-on microphone. Audio is also written to a temporary M4A for batch transcription.
 @MainActor public final class VoiceRecorder: ObservableObject {
     public struct Recording {
@@ -16,6 +16,7 @@ import Speech
     @Published public private(set) var isRecording = false
     /// Updated word by word while recording.
     @Published public private(set) var liveTranscript = ""
+    @Published public private(set) var endpoint: SpeechEndpoint = .listening
 
     private let engine = AVAudioEngine()
     private var tapInstalled = false
@@ -25,6 +26,8 @@ import Speech
     private var task: SFSpeechRecognitionTask?
     private var finalTranscript: String?
     private var recordingID = UUID()
+    private var endpointDetector = SpeechEndpointDetector(startedAt: 0)
+    private var endpointMonitor: Task<Void, Never>?
     public init() {}
 
     /// Ask for microphone and speech recognition up front so the prompts appear during onboarding.
@@ -78,14 +81,29 @@ import Speech
                     Task { @MainActor in self?.receive(result, error: error, id: requestID) }
                 }
             }
-            input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in
+            endpointDetector = SpeechEndpointDetector(startedAt: ProcessInfo.processInfo.systemUptime)
+            input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
                 try? file.write(from: buffer)
                 speech?.append(buffer)
+                let level = Self.levelDB(buffer)
+                let time = ProcessInfo.processInfo.systemUptime
+                Task { @MainActor in
+                    guard let self, self.recordingID == requestID, self.isRecording else { return }
+                    self.endpointDetector.observeAudio(levelDB: level, at: time)
+                }
             }
             tapInstalled = true
             engine.prepare()
             try engine.start()
             isRecording = true
+            endpointMonitor = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard !Task.isCancelled, let self, self.recordingID == requestID, self.isRecording else { return }
+                    let result = self.endpointDetector.endpoint(at: ProcessInfo.processInfo.systemUptime)
+                    if result != .listening { self.endpoint = result; return }
+                }
+            }
         } catch { cancel(); throw error }
     }
 
@@ -93,7 +111,10 @@ import Speech
         guard recordingID == id else { return }
         if let result {
             let text = result.bestTranscription.formattedString
-            if !text.isEmpty { liveTranscript = text }
+            if !text.isEmpty, text != liveTranscript {
+                liveTranscript = text
+                endpointDetector.observeTranscript(at: ProcessInfo.processInfo.systemUptime)
+            }
             if result.isFinal { finalTranscript = text }
         }
         // Ending audio can surface an error instead of a final result; keep the last partial.
@@ -103,12 +124,16 @@ import Speech
     public func finish() async throws -> Recording {
         guard isRecording, let fileURL else { throw RecorderError.couldNotRecord }
         let id = recordingID
+        endpointMonitor?.cancel()
+        endpointMonitor = nil
         stopCapture()
         isRecording = false
         request?.endAudio()
         // Give the recognizer a moment for its final result; the last partial is the fallback.
         var waited = 0
-        while finalTranscript == nil, request != nil, waited < 15 {
+        // A partial transcript is already usable; do not add 1.5s of latency after endpointing.
+        let finalWait = liveTranscript.isEmpty ? 10 : 3
+        while finalTranscript == nil, request != nil, waited < finalWait {
             try? await Task.sleep(for: .milliseconds(100))
             guard recordingID == id else { throw CancellationError() }
             waited += 1
@@ -122,6 +147,8 @@ import Speech
 
     public func cancel() {
         recordingID = UUID()
+        endpointMonitor?.cancel()
+        endpointMonitor = nil
         stopCapture()
         task?.cancel()
         task = nil
@@ -131,6 +158,7 @@ import Speech
         fileURL = nil
         finalTranscript = nil
         liveTranscript = ""
+        endpoint = .listening
         isRecording = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
@@ -143,6 +171,18 @@ import Speech
         if engine.isRunning { engine.stop() }
         // Releasing the file finalizes the M4A container so it can be read back.
         file = nil
+    }
+
+    nonisolated private static func levelDB(_ buffer: AVAudioPCMBuffer) -> Double {
+        guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return -80 }
+        var energy = 0.0
+        var count = 0
+        for index in stride(from: 0, to: Int(buffer.frameLength), by: 4) {
+            let sample = Double(samples[index])
+            energy += sample * sample
+            count += 1
+        }
+        return 10 * log10(max(energy / Double(max(1, count)), 1e-8))
     }
 }
 

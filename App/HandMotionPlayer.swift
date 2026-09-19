@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreImage
 import SwiftUI
 import UIKit
 
@@ -8,29 +9,59 @@ enum HandMotionTiming {
     static let width: CGFloat = 390
     static let height: CGFloat = 460
     static let duration = 2.30
-    static let framesPerSecond = 30.0
     static let stillRect = CGRect(x: 95.07, y: 30, width: 219.86, height: 400)
     static let bannerRect = CGRect(x: 16, y: 124, width: 358, height: 208)
     static let bannerRadius: CGFloat = 18
 
     static func bannerEdge(at seconds: Double) -> CGFloat {
         let u = min(1, max(0, (seconds - 0.78) / 0.87))
-        // The hand and native panel use the same eased lerp, with no second
-        // SwiftUI animation to introduce lag between the grip and panel edge.
+        // This receives the displayed pixel buffer's presentation timestamp,
+        // never the player's independently advancing clock.
         let progress = u * u * u * (u * (u * 6 - 15) + 10)
         return -12 + (bannerRect.maxX + 12) * progress
     }
 }
 
 @MainActor final class HandMotionPlayer: ObservableObject {
-    let player = AVPlayer()
-    @Published private(set) var seconds = 0.0
-    @Published private(set) var frameReady = false
-    @Published private(set) var running = false
-    @Published private(set) var finished = false
-    @Published private(set) var usesFallback = false
+    struct Frame {
+        let image: CGImage
+        let seconds: Double
+    }
 
-    private var timeObserver: Any?
+    enum PlaybackState {
+        case idle
+        case playing(Frame?)
+        case finished(fallback: Bool)
+    }
+
+    // A single publication pairs the image with its exact timestamp. SwiftUI
+    // commits the hand and panel together, even when display frames are skipped.
+    @Published private(set) var state: PlaybackState = .idle
+
+    var frame: Frame? {
+        if case let .playing(frame) = state { return frame }
+        return nil
+    }
+    var running: Bool {
+        if case .playing = state { return true }
+        return false
+    }
+    var finished: Bool {
+        if case .finished = state { return true }
+        return false
+    }
+    var usesFallback: Bool {
+        if case let .finished(fallback) = state { return fallback }
+        return false
+    }
+    var seconds: Double { finished ? HandMotionTiming.duration : frame?.seconds ?? 0 }
+    var frameReady: Bool { frame != nil }
+
+    private let player = AVPlayer()
+    private let imageContext = CIContext(options: [.cacheIntermediates: false])
+    private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+    private var videoOutput: AVPlayerItemVideoOutput?
+    private var displayLink: CADisplayLink?
     private var endObserver: NSObjectProtocol?
     private var itemObserver: NSKeyValueObservation?
     private var watchdog: Task<Void, Never>?
@@ -50,25 +81,20 @@ enum HandMotionTiming {
         }
         let token = generation
         let item = AVPlayerItem(url: url)
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [String: Int]()
+        ])
+        output.suppressesPlayerRendering = true
+        item.add(output)
+        videoOutput = output
         player.replaceCurrentItem(with: item)
-        running = true
+        state = .playing(nil)
         itemObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
             let failed = item.status == .failed
             Task { @MainActor in
                 guard let self, self.generation == token, failed else { return }
                 self.finish(fallback: true)
-            }
-        }
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 60), queue: .main) { [weak self] time in
-            Task { @MainActor in
-                guard let self, self.generation == token, self.running else { return }
-                let value = time.seconds
-                if value.isFinite {
-                    // The video holds each frame for 1/30s. Hold the banner on
-                    // the same sample instead of letting it lead the matte.
-                    let frameTime = floor(max(0, value) * HandMotionTiming.framesPerSecond) / HandMotionTiming.framesPerSecond
-                    self.seconds = min(HandMotionTiming.duration, frameTime)
-                }
             }
         }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
@@ -77,6 +103,11 @@ enum HandMotionTiming {
                 self.finish(fallback: false)
             }
         }
+        let target = DisplayLinkTarget(owner: self)
+        let link = CADisplayLink(target: target, selector: #selector(DisplayLinkTarget.tick(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        displayLink = link
+        link.add(to: .main, forMode: .common)
         player.play()
         // A missing/unsupported/stalled decorative movie must never block voice UI.
         watchdog = Task { [weak self] in
@@ -95,80 +126,58 @@ enum HandMotionTiming {
         }
     }
 
-    func displayReady(_ ready: Bool) {
-        if running, ready { frameReady = true }
+    private func displayFrame(at hostTime: CFTimeInterval) {
+        guard running, let output = videoOutput else { return }
+        let requestedTime = output.itemTime(forHostTime: hostTime)
+        guard requestedTime.isNumeric, output.hasNewPixelBuffer(forItemTime: requestedTime) else { return }
+        var presentationTime = CMTime.invalid
+        guard let buffer = output.copyPixelBuffer(forItemTime: requestedTime, itemTimeForDisplay: &presentationTime) else { return }
+        guard presentationTime.isNumeric else {
+            finish(fallback: true)
+            return
+        }
+        let source = CIImage(cvPixelBuffer: buffer)
+        guard let image = imageContext.createCGImage(source, from: source.extent, format: .RGBA8, colorSpace: colorSpace) else {
+            finish(fallback: true)
+            return
+        }
+        state = .playing(Frame(image: image, seconds: min(HandMotionTiming.duration, max(0, presentationTime.seconds))))
     }
 
     func finish(fallback: Bool) {
         generation = UUID()
         clearPlayback()
-        usesFallback = fallback
         withAnimation(fallback ? .easeOut(duration: 0.18) : nil) {
-            seconds = HandMotionTiming.duration
-            running = false
-            finished = true
+            state = .finished(fallback: fallback)
         }
     }
 
     func reset() {
         generation = UUID()
         clearPlayback()
-        seconds = 0
-        frameReady = false
-        running = false
-        finished = false
-        usesFallback = false
+        state = .idle
     }
 
     private func clearPlayback() {
         watchdog?.cancel()
         watchdog = nil
+        displayLink?.invalidate()
+        displayLink = nil
         player.pause()
-        if let timeObserver { player.removeTimeObserver(timeObserver) }
-        timeObserver = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         endObserver = nil
         itemObserver?.invalidate()
         itemObserver = nil
         player.replaceCurrentItem(with: nil)
+        videoOutput = nil
     }
-}
 
-/// AVPlayerLayer preserves the alpha track; VideoPlayer adds an opaque host/controls.
-struct TransparentHandMovie: UIViewRepresentable {
-    let motion: HandMotionPlayer
-
-    func makeUIView(context: Context) -> PlayerSurface {
-        let view = PlayerSurface()
-        view.playerLayer.player = motion.player
-        context.coordinator.observation = view.playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak motion] layer, _ in
-            let ready = layer.isReadyForDisplay
-            Task { @MainActor in motion?.displayReady(ready) }
+    // CADisplayLink retains its target. This proxy leaves ownership with the view.
+    @MainActor private final class DisplayLinkTarget: NSObject {
+        weak var owner: HandMotionPlayer?
+        init(owner: HandMotionPlayer) { self.owner = owner }
+        @objc func tick(_ link: CADisplayLink) {
+            owner?.displayFrame(at: link.targetTimestamp)
         }
-        return view
-    }
-
-    func updateUIView(_ uiView: PlayerSurface, context: Context) {}
-    func makeCoordinator() -> Coordinator { Coordinator() }
-    static func dismantleUIView(_ uiView: PlayerSurface, coordinator: Coordinator) {
-        coordinator.observation?.invalidate()
-        uiView.playerLayer.player = nil
-    }
-
-    final class Coordinator { var observation: NSKeyValueObservation? }
-
-    final class PlayerSurface: UIView {
-        override class var layerClass: AnyClass { AVPlayerLayer.self }
-        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
-        override init(frame: CGRect) {
-            super.init(frame: frame)
-            backgroundColor = .clear
-            isOpaque = false
-            isUserInteractionEnabled = false
-            playerLayer.backgroundColor = UIColor.clear.cgColor
-            playerLayer.isOpaque = false
-            playerLayer.videoGravity = .resizeAspect
-        }
-        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     }
 }

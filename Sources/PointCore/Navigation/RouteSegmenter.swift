@@ -82,14 +82,15 @@ final class RouteSegmenter {
         var checkpoints: [RouteCheckpoint] = []
         checkpoints.reserveCapacity(resampled.count)
 
+        let instructions = steps.map { Self.stripHTMLTags($0.htmlInstructions) }
         var cumulative: Double = 0
         for i in 0..<resampled.count {
             if i > 0 {
                 cumulative += RouteGeometry.distanceMeters(resampled[i - 1].coord, resampled[i].coord)
             }
             let stepIdx = resampled[i].stepIndex
-            let instruction = steps.indices.contains(stepIdx)
-                ? Self.stripHTMLTags(steps[stepIdx].htmlInstructions)
+            let instruction = instructions.indices.contains(stepIdx)
+                ? instructions[stepIdx]
                 : ""
 
             let bearing: Double
