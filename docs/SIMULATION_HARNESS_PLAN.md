@@ -326,8 +326,12 @@ Phases 1–2 are independently useful; nothing later is required for them to pay
 Implemented on this branch, additive only: `Sources/PointSim` (clock, seeded RNG, scenario schema,
 route builder, walker/GPS, arm/IMU, recording glove and phone-haptic adapters, scripted voice
 services, engine, trace, assertions, metrics, Markdown report), `Sources/PointSimCLI` (`point-sim`),
-`Scenarios/*.json` and `Tests/PointSimTests`. `PointCore` and `App` are untouched; the only shared
-file changed is `Package.swift`, which gains the new targets.
+`Scenarios/*.json` and `Tests/PointSimTests`. `App` is untouched; `Package.swift` gains the new
+targets and `PointCore` gains one additive, behaviour-free seam, `SyntheticRoute.plan(…)`, which
+runs synthetic geometry through the existing `RouteSegmenter` + `TurnPointExtractor`. Simulated
+routes therefore get the production checkpoint spacing (15 m) and beacon rule (start, turns over
+45°, destination) instead of a harness-local approximation — scenarios can override both via
+`checkpointSpacingMeters` and `turnThresholdDegrees`.
 
 ```sh
 swift run point-sim run --all          # traces + Markdown into .sim-out/

@@ -99,6 +99,8 @@ public struct RouteSpec: Codable {
     public struct Leg: Codable {
         public let bearing: Double
         public let meters: Double
+        /// Step instruction the leg carries, as a provider would supply it.
+        public let instruction: String?
     }
 
     public var kind: Kind
@@ -107,11 +109,14 @@ public struct RouteSpec: Codable {
     public var origin: Coord?
     public var legs: [Leg]?
     public var fixture: String?
-    /// Metres between synthesised checkpoints along a generated leg.
+    /// Checkpoint resampling interval handed to the production segmenter.
     public var checkpointSpacingMeters: Double
+    /// Turn angle above which the production extractor promotes a checkpoint to a beacon.
+    public var turnThresholdDegrees: Double
 
     enum CodingKeys: String, CodingKey {
-        case kind, destinationName, coordinates, origin, legs, fixture, checkpointSpacingMeters
+        case kind, destinationName, coordinates, origin, legs, fixture, checkpointSpacingMeters,
+             turnThresholdDegrees
     }
 
     public init(from decoder: Decoder) throws {
@@ -122,7 +127,8 @@ public struct RouteSpec: Codable {
         origin = try container.decodeIfPresent(Coord.self, forKey: .origin)
         legs = try container.decodeIfPresent([Leg].self, forKey: .legs)
         fixture = try container.decodeIfPresent(String.self, forKey: .fixture)
-        checkpointSpacingMeters = try container.decodeIfPresent(Double.self, forKey: .checkpointSpacingMeters) ?? 20
+        checkpointSpacingMeters = try container.decodeIfPresent(Double.self, forKey: .checkpointSpacingMeters) ?? 15
+        turnThresholdDegrees = try container.decodeIfPresent(Double.self, forKey: .turnThresholdDegrees) ?? 45
     }
 
     public func validate() throws {
@@ -137,6 +143,9 @@ public struct RouteSpec: Codable {
             }
             guard checkpointSpacingMeters > 0 else {
                 throw ScenarioError.invalid("checkpointSpacingMeters must be positive")
+            }
+            guard turnThresholdDegrees > 0, turnThresholdDegrees < 180 else {
+                throw ScenarioError.invalid("turnThresholdDegrees must be between 0 and 180")
             }
         case .fixture:
             guard let fixture, !fixture.isEmpty else {

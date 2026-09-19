@@ -1,6 +1,7 @@
 import CoreLocation
 import Foundation
 import Testing
+import PointCore
 import PointSim
 
 struct HarnessUnitTests {
@@ -50,6 +51,43 @@ struct HarnessUnitTests {
     @Test func scenarioValidationRejectsIncompleteRoutes() {
         let json = Data(#"{"id": "x", "route": {"kind": "generated"}}"#.utf8)
         #expect(throws: (any Error).self) { try JSONDecoder().decode(Scenario.self, from: json).validated() }
+    }
+
+    @Test func generatedRoutesGetTheProductionBeaconLayout() throws {
+        func beacons(legs: String) throws -> [PingTarget] {
+            let json = """
+            {"kind": "generated", "destinationName": "Test",
+             "origin": [42.36207, -71.08636], "legs": \(legs)}
+            """
+            let spec = try JSONDecoder().decode(RouteSpec.self, from: Data(json.utf8))
+            return try RouteBuilder.build(spec, fixturesDirectory: nil).beacons
+        }
+
+        // Start and destination only: a straight leg has no turn to ping on.
+        let straight = try beacons(legs: #"[{"bearing": 0, "meters": 120}]"#)
+        #expect(straight.count == 2)
+        // A shallow bend stays below the 45° extractor threshold.
+        let bend = try beacons(legs: #"[{"bearing": 0, "meters": 120}, {"bearing": 20, "meters": 120}]"#)
+        #expect(bend.count == 2)
+        // A real corner earns its own beacon between start and destination.
+        let corner = try beacons(legs: #"[{"bearing": 0, "meters": 120}, {"bearing": 90, "meters": 120}]"#)
+        #expect(corner.count == 3)
+        #expect(corner.allSatisfy { !$0.instruction.isEmpty })
+        #expect(corner.last?.isFinalDestination == true)
+        #expect(corner.dropLast().allSatisfy { !$0.isFinalDestination })
+    }
+
+    @Test func generatedRoutesResampleCheckpointsAtTheRequestedInterval() throws {
+        let json = """
+        {"kind": "generated", "destinationName": "Test", "checkpointSpacingMeters": 15,
+         "origin": [42.36207, -71.08636], "legs": [{"bearing": 0, "meters": 120}]}
+        """
+        let spec = try JSONDecoder().decode(RouteSpec.self, from: Data(json.utf8))
+        let checkpoints = try RouteBuilder.build(spec, fixturesDirectory: nil).checkpoints
+        let gaps = zip(checkpoints, checkpoints.dropFirst())
+            .map { SimGeometry.distanceMeters($0.coordinate, $1.coordinate) }
+        #expect(gaps.allSatisfy { $0 <= 15.5 })
+        #expect(SimGeometry.distanceMeters(checkpoints.last!.coordinate, spec.origin!.coordinate) > 119)
     }
 
     @Test func reservedIntentsAreNotClaimedAsImplemented() {

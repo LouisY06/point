@@ -2,17 +2,25 @@ import CoreLocation
 import Foundation
 import PointCore
 
-/// Builds a `RoutePlan` from a scenario. Fixtures reuse the production importer so recorded
-/// directions payloads go through the same segmentation as the app.
+/// Builds a `RoutePlan` from a scenario. Every kind goes through the production segmenter and
+/// turn-point extractor, so simulated routes carry the same checkpoint spacing and beacon layout
+/// the app gets from MapKit.
 public enum RouteBuilder {
     public static func build(_ spec: RouteSpec, fixturesDirectory: URL?) throws -> RoutePlan {
         switch spec.kind {
         case .inline:
-            return plan(for: spec.coordinates!.map(\.coordinate), name: spec.destinationName,
-                        spacingMeters: spec.checkpointSpacingMeters)
+            return try plan(steps: [SyntheticRouteStep(instruction: "Continue toward \(spec.destinationName)",
+                                                       coordinates: spec.coordinates!.map(\.coordinate))],
+                            spec: spec)
         case .generated:
-            return plan(for: generatedVertices(spec), name: spec.destinationName,
-                        spacingMeters: spec.checkpointSpacingMeters)
+            let vertices = generatedVertices(spec)
+            let legs = spec.legs!
+            let steps = legs.enumerated().map { index, leg in
+                SyntheticRouteStep(instruction: leg.instruction ?? defaultInstruction(index: index, count: legs.count,
+                                                                                      destination: spec.destinationName),
+                                   coordinates: [vertices[index], vertices[index + 1]])
+            }
+            return try plan(steps: steps, spec: spec)
         case .fixture:
             guard let directory = fixturesDirectory else { throw ScenarioError.missingFixture(spec.fixture!) }
             let url = directory.appendingPathComponent(spec.fixture!)
@@ -33,39 +41,16 @@ public enum RouteBuilder {
         return vertices
     }
 
-    /// One beacon per corner, matching how the app treats turns as ping targets, with intermediate
-    /// checkpoints so off-route detection has a path to measure against.
-    static func plan(for vertices: [CLLocationCoordinate2D], name: String,
-                     spacingMeters: Double = 20) -> RoutePlan {
-        var checkpoints: [RouteCheckpoint] = []
-        var travelled = 0.0
-        for (index, start) in vertices.enumerated().dropLast() {
-            let end = vertices[index + 1]
-            let legLength = SimGeometry.distanceMeters(start, end)
-            let bearing = SimGeometry.bearingDegrees(from: start, to: end)
-            let steps = max(1, Int((legLength / spacingMeters).rounded(.down)))
-            for step in 0..<steps {
-                let fraction = Double(step) / Double(steps)
-                let point = SimGeometry.offset(from: start, bearingDegrees: bearing,
-                                               distanceMeters: legLength * fraction)
-                checkpoints.append(RouteCheckpoint(coordinate: point,
-                                                   distanceFromStartMeters: travelled + legLength * fraction,
-                                                   stepIndex: index, stepInstruction: "Continue",
-                                                   bearingToNextDegrees: bearing))
-            }
-            travelled += legLength
-        }
-        let last = vertices[vertices.count - 1]
-        checkpoints.append(RouteCheckpoint(coordinate: last, distanceFromStartMeters: travelled,
-                                           stepIndex: max(0, vertices.count - 2),
-                                           stepInstruction: "Arrive", bearingToNextDegrees: 0))
-        let beacons = vertices.enumerated().map { index, coordinate in
-            PingTarget(coordinate: coordinate,
-                       instruction: index == vertices.count - 1 ? "You have arrived" : "Continue",
-                       isFinalDestination: index == vertices.count - 1,
-                       bearingAfterTurnDegrees: index == vertices.count - 1
-                           ? 0 : SimGeometry.bearingDegrees(from: coordinate, to: vertices[index + 1]))
-        }
-        return RoutePlan(destinationName: name, checkpoints: checkpoints, beacons: beacons)
+    private static func plan(steps: [SyntheticRouteStep], spec: RouteSpec) throws -> RoutePlan {
+        try SyntheticRoute.plan(destinationName: spec.destinationName,
+                                steps: steps,
+                                checkpointIntervalMeters: spec.checkpointSpacingMeters,
+                                turnThresholdDegrees: spec.turnThresholdDegrees)
+    }
+
+    private static func defaultInstruction(index: Int, count: Int, destination: String) -> String {
+        if index == 0 { return "Begin route" }
+        if index == count - 1 { return "Arrive at \(destination)" }
+        return "Turn"
     }
 }
