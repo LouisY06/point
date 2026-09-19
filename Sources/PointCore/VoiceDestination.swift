@@ -1,0 +1,112 @@
+import Combine
+import CoreLocation
+import Foundation
+
+@MainActor public protocol SpeechTranscribing {
+    func transcribe(audio: Data) async throws -> String
+}
+
+public struct PlaceCandidate: Identifiable {
+    public let id: String
+    public let name: String
+    public let address: String
+    public let coordinate: CLLocationCoordinate2D
+
+    public init(id: String, name: String, address: String, coordinate: CLLocationCoordinate2D) {
+        self.id = id; self.name = name; self.address = address; self.coordinate = coordinate
+    }
+}
+
+@MainActor public protocol PlaceSearching {
+    func search(_ query: String, near location: CLLocationCoordinate2D) async throws -> [PlaceCandidate]
+}
+
+public enum VoiceSearchState: String { case idle, transcribing, searching, chooseDestination, failed }
+
+/// Speech and typed input share the same editable search path. Navigation starts only after selection.
+@MainActor public final class VoiceDestination: ObservableObject {
+    @Published public private(set) var state: VoiceSearchState = .idle
+    @Published public private(set) var transcript = ""
+    @Published public private(set) var candidates: [PlaceCandidate] = []
+    @Published public private(set) var errorMessage: String?
+    private let transcriber: any SpeechTranscribing
+    private let places: any PlaceSearching
+    private var generation = UUID()
+
+    public init(transcriber: any SpeechTranscribing, places: any PlaceSearching) {
+        self.transcriber = transcriber; self.places = places
+    }
+
+    public func submit(audio: Data, near location: CLLocationCoordinate2D) async {
+        let request = begin(.transcribing)
+        do {
+            let text = try await transcriber.transcribe(audio: audio)
+            guard generation == request, !Task.isCancelled else { return }
+            transcript = text
+            try await search(text, near: location, request: request)
+        } catch { fail(error, request: request) }
+    }
+
+    public func submit(text: String, near location: CLLocationCoordinate2D) async {
+        let request = begin(.searching)
+        transcript = text
+        do { try await search(text, near: location, request: request) }
+        catch { fail(error, request: request) }
+    }
+
+    public func cancel() {
+        generation = UUID()
+        state = .idle
+        candidates = []
+        errorMessage = nil
+    }
+
+    private func begin(_ state: VoiceSearchState) -> UUID {
+        generation = UUID()
+        self.state = state
+        transcript = ""
+        candidates = []
+        errorMessage = nil
+        return generation
+    }
+
+    private func search(_ text: String, near location: CLLocationCoordinate2D, request: UUID) async throws {
+        let query = Self.destinationQuery(from: text)
+        guard !query.isEmpty else { throw ServiceError.emptyTranscript }
+        state = .searching
+        let results = try await places.search(query, near: location)
+        guard generation == request, !Task.isCancelled else { return }
+        candidates = results
+        state = .chooseDestination
+    }
+
+    private func fail(_ error: Error, request: UUID) {
+        guard generation == request else { return }
+        if error is CancellationError || Task.isCancelled { cancel(); return }
+        state = .failed
+        errorMessage = error.localizedDescription
+    }
+
+    /// Minimal single-turn phrasing support; the user's transcript stays intact and editable.
+    public static func destinationQuery(from text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"(?i)^(?:please\s+)?(?:take me to|navigate to|directions to|i want to go to)\s+"#,
+                                  with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+public enum ServiceError: LocalizedError {
+    case http(Int), invalidResponse, emptyTranscript, invalidAudio, missingCredential, noRoute
+
+    public var errorDescription: String? {
+        switch self {
+        case .http(let status): return "The service returned an error (\(status)). Please try again."
+        case .invalidResponse: return "The service response could not be read."
+        case .emptyTranscript: return "No destination was heard. Try again or type a place."
+        case .invalidAudio: return "Record a short M4A clip before searching."
+        case .missingCredential: return "The service has not been configured yet."
+        case .noRoute: return "No walking route was found."
+        }
+    }
+}

@@ -1,0 +1,40 @@
+name: Point
+options:
+  bundleIdPrefix: com.point
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  PointCore:
+    path: .
+  GoogleMaps:
+    url: https://github.com/googlemaps/ios-maps-sdk
+    exactVersion: 10.8.0
+targets:
+  Point:
+    type: application
+    platform: iOS
+    sources: [App]
+    dependencies:
+      - package: PointCore
+      - package: GoogleMaps
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.point.navigator
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: Say where you want to go to search for a destination.
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: Your location guides you toward the next point on your walking route.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to your development voice and maps service.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+schemes:
+  Point:
+    build:
+      targets:
+        Point: all
+    run:
+      config: Debug
