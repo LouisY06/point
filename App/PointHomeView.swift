@@ -240,8 +240,9 @@ private struct PointHomeContent: View {
                         if !model.isDemo, model.usePhoneAsGlove, model.journeyPlan == nil || (model.isWalkingLeg && !model.awaitingSignal) {
                             PhonePointingStatusView(tester: model.phoneTester, beaconIndex: model.activeBeaconIndex,
                                                     beaconCount: model.route?.beacons.count ?? 0, arrived: model.journeyState == .arrived)
-                            Button("Test vibration") { model.phoneTester.testVibration() }
-                                .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
+                            Button { model.phoneTester.testVibration() } label: {
+                                Text("Test vibration").font(.subheadline.weight(.semibold)).frame(minHeight: 44)
+                            }
                             if model.journeyState != .arrived, model.journeyPlan == nil {
                                 Button(model.journeyState == .paused ? "Resume pointing" : "Pause pointing") {
                                     if model.journeyState == .paused { model.resumeJourney() }
