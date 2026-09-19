@@ -293,7 +293,7 @@ struct PointHomeView: View {
     private var destinationSheet: some View {
         NavigationStack {
             List {
-                Section { Text(model.transcript).foregroundStyle(.secondary) }
+                Section { Text(model.transcript).foregroundStyle(.secondary).accessibilityLabel("You said: \(model.transcript)") }
                 Section {
                     Button { model.microphone() } label: { Label("Reply by voice", systemImage: "mic.fill") }
                 }
