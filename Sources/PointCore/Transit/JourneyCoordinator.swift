@@ -74,10 +74,11 @@ import Foundation
     /// True from alighting until a fresh, accurate fix proves we are back outside. The walking
     /// session runs (so the map is right) but no instructions or pointing should be given.
     @Published public private(set) var awaitingSignal = false
-    /// Test mode: watch the next ride's board stop from the moment a walking leg starts, and cue
-    /// `vehicleArrived` whenever a vehicle on that route/direction arrives there, without requiring
-    /// the rider to be at the stop. Later this narrows to "at the stop and arriving".
+    /// Test mode: from the moment the trip starts, watch the board stop of every ride in the plan
+    /// and cue `vehicleArrived` whenever a vehicle on that route/direction arrives at it, wherever
+    /// the rider is. Later this narrows to "at the stop and arriving".
     public var cueArrivalsWhileWalking = true
+    private var testPolls: [Task<Void, Never>] = []
     public var onEvent: ((Event) -> Void)?
 
     public let controller: PointController
@@ -111,9 +112,45 @@ import Foundation
         lastFix = fix
         guard case .walk(let walk)? = plan.legs.first else { throw ServiceError.noRoute }
         try beginWalk(leg: 0, walk, at: fix, now: now)
+        if cueArrivalsWhileWalking { startTestPolls(plan) }
+    }
+
+    /// One watcher per ride, independent of the phase polls, for the whole trip.
+    private func startTestPolls(_ plan: JourneyPlan) {
+        testPolls.forEach { $0.cancel() }
+        testPolls = plan.rides.map { ride in
+            Task { [weak self] in
+                while !Task.isCancelled {
+                    guard let self else { return }
+                    let result = try? await transit.arrivals(at: ride.board, route: ride.routeFilter, directionID: ride.directionID)
+                    guard !Task.isCancelled else { return }
+                    if let result { handleTestArrivals(result, ride: ride, now: Date()) }
+                    try? await Task.sleep(for: pollInterval)
+                }
+            }
+        }
+    }
+
+    /// Test mode cue: at the platform, or predicted within 45 s; once per trip and status.
+    func handleTestArrivals(_ arrivals: [TransitArrival], ride: RideLeg, now: Date) {
+        guard cueArrivalsWhileWalking else { return }
+        for arrival in arrivals where arrival.patternID == nil || ride.acceptablePatternIDs.contains(arrival.patternID!) {
+            let atPlatform = arrival.vehicle.map { vehicle in
+                vehicle.platformStopID.map { ride.boardPlatformIDs.contains($0) } == true && (vehicle.status == .stoppedAt || vehicle.status == .incomingAt)
+            } ?? false
+            let imminent = (arrival.secondsAway(now: now) ?? .max) <= 45
+            guard atPlatform || imminent else { continue }
+            let key = "\(arrival.tripID)/\(atPlatform ? arrival.vehicle!.status.rawValue : "imminent")"
+            if cued.insert(key).inserted {
+                controller.emit(.vehicleArrived)
+                onEvent?(.vehicleArriving(ride))
+            }
+        }
     }
 
     public func stop() {
+        testPolls.forEach { $0.cancel() }
+        testPolls = []
         advance(.idle)
         plan = nil
         countdown = nil
@@ -211,21 +248,10 @@ import Foundation
         let acceptable = arrivals.filter { $0.patternID == nil || ride.acceptablePatternIDs.contains($0.patternID!) }
         switch phase {
         case .walking:
-            // Test mode: cue every arrival of our route/direction at the board stop while still walking.
+            // Test mode: the countdown for the stop this leg leads to; cues come from the watchers.
             guard cueArrivalsWhileWalking else { return }
             countdown = makeCountdown(acceptable, ride: ride, now: now)
-            for arrival in acceptable {
-                let atPlatform = arrival.vehicle.map { vehicle in
-                    vehicle.platformStopID.map { ride.boardPlatformIDs.contains($0) } == true && (vehicle.status == .stoppedAt || vehicle.status == .incomingAt)
-                } ?? false
-                let imminent = (arrival.secondsAway(now: now) ?? .max) <= 45
-                guard atPlatform || imminent else { continue }
-                let key = "\(arrival.tripID)/\(atPlatform ? arrival.vehicle!.status.rawValue : "imminent")"
-                if cued.insert(key).inserted {
-                    controller.emit(.vehicleArrived)
-                    onEvent?(.vehicleArriving(ride))
-                }
-            }
+            handleTestArrivals(acceptable, ride: ride, now: now)
         case .waitingAtStop, .vehicleArriving:
             countdown = makeCountdown(acceptable, ride: ride, now: now)
             if case .vehicleArriving(_, let trip) = phase {

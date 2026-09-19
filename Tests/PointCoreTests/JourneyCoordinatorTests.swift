@@ -197,6 +197,13 @@ import Testing
                                     TransitArrival(tripID: "trip-B", patternID: "Red-3-0", headsign: "Braintree", time: epoch.addingTimeInterval(100), status: nil, vehicle: nil)],
                                    now: epoch.addingTimeInterval(60))
         #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 2)
+        // Every ride's board stop is watched, not just the next one: a Green Line train at Park St cues too.
+        let green = TransitArrival(tripID: "trip-G", patternID: "Green-B-0", headsign: "Boston College", time: nil, status: nil,
+                                   vehicle: VehicleStatus(vehicleID: "G", status: .incomingAt, platformStopID: "g-park-w", coordinate: nil, updatedAt: epoch))
+        coordinator.handleTestArrivals([green], ride: plan.rides[1], now: epoch.addingTimeInterval(70))
+        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 3)
+        #expect(coordinator.phase == .walking(leg: 0))
+        #expect(events.contains(.vehicleArriving(plan.rides[1])))
         // Off by default when test mode is disabled.
         let quiet = JourneyCoordinator(controller: PointController(glove: glove), transit: FakeTransit(), pollInterval: .seconds(60))
         quiet.cueArrivalsWhileWalking = false
