@@ -184,6 +184,11 @@ import Testing
         #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 1)
         #expect(events.contains(.vehicleArriving(plan.rides[0])))
         #expect(coordinator.countdown?.secondsAway == 30)
+        coordinator.handleArrivals([arrival("trip-A", status: .stoppedAt, platform: "r-kendall-s", seconds: 30),
+                                    arrival("trip-B", pattern: "Red-3-0", status: .inTransitTo, platform: "r-charles-s", seconds: 400),
+                                    arrival("trip-C", status: .inTransitTo, platform: "r-charles-s", seconds: 800),
+                                    arrival("trip-D", status: .inTransitTo, platform: "r-charles-s", seconds: 1300)], now: epoch)
+        #expect(coordinator.countdown?.following == [400, 800]) // The next two after the first.
         coordinator.handleArrivals([arrival("trip-A", status: .stoppedAt, platform: "r-kendall-s", seconds: 20)], now: epoch.addingTimeInterval(10))
         #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 1) // Same trip/status: no repeat.
         // Wrong direction never cues; a different trip that is imminent (no vehicle yet) does.

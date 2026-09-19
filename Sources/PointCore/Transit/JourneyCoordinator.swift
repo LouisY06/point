@@ -55,6 +55,15 @@ import Foundation
         public let secondsAway: Int?
         public let status: String?
         public let routeName: String
+        /// Seconds until the next departures after this one, up to two.
+        public let following: [Int]
+    }
+
+    private func makeCountdown(_ arrivals: [TransitArrival], ride: RideLeg, now: Date) -> Countdown? {
+        guard let first = arrivals.first else { return nil }
+        return Countdown(headsign: first.headsign.isEmpty ? ride.headsign : first.headsign, secondsAway: first.secondsAway(now: now),
+                         status: first.status, routeName: ride.route.name,
+                         following: arrivals.dropFirst().compactMap { $0.secondsAway(now: now) }.prefix(2).map { $0 })
     }
 
     @Published public private(set) var phase: Phase = .idle
@@ -204,8 +213,7 @@ import Foundation
         case .walking:
             // Test mode: cue every arrival of our route/direction at the board stop while still walking.
             guard cueArrivalsWhileWalking else { return }
-            countdown = acceptable.first.map { Countdown(headsign: $0.headsign.isEmpty ? ride.headsign : $0.headsign, secondsAway: $0.secondsAway(now: now),
-                                                          status: $0.status, routeName: ride.route.name) }
+            countdown = makeCountdown(acceptable, ride: ride, now: now)
             for arrival in acceptable {
                 let atPlatform = arrival.vehicle.map { vehicle in
                     vehicle.platformStopID.map { ride.boardPlatformIDs.contains($0) } == true && (vehicle.status == .stoppedAt || vehicle.status == .incomingAt)
@@ -219,9 +227,7 @@ import Foundation
                 }
             }
         case .waitingAtStop, .vehicleArriving:
-            let next = acceptable.first
-            countdown = next.map { Countdown(headsign: $0.headsign.isEmpty ? ride.headsign : $0.headsign, secondsAway: $0.secondsAway(now: now),
-                                              status: $0.status, routeName: ride.route.name) }
+            countdown = makeCountdown(acceptable, ride: ride, now: now)
             if case .vehicleArriving(_, let trip) = phase {
                 // Our flagged vehicle moved on to the next platform (or vanished from this stop): it departed.
                 let current = acceptable.first { $0.tripID == trip }

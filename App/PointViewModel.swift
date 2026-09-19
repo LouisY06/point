@@ -575,17 +575,13 @@ import UIKit
             if awaitingSignal { return "Head for the exit · Directions resume when GPS returns" }
             var text = "Walking"
             if case .walk(let walk) = journeyPlan.legs[leg] { text = "Walk to \(walk.destinationName)" }
-            if let countdown = transitCountdown {
-                let when = countdown.status ?? countdown.secondsAway.map { $0 < 60 ? "now" : "in \($0 / 60) min" } ?? ""
-                text += " · \(countdown.routeName) \(when)"
-            }
+            if let countdown = transitCountdown { text += " · \(countdown.routeName) \(Self.departures(countdown))" }
             return text
         case .waitingAtStop(let leg):
             guard let ride = ride(leg) else { return "Waiting" }
             if !liveTransitData { return "At \(ride.board.name) · No signal for live arrivals" }
             if let countdown = transitCountdown {
-                let when = countdown.status ?? countdown.secondsAway.map { $0 < 60 ? "now" : "in \($0 / 60) min" } ?? ""
-                return "\(ride.route.name) toward \(countdown.headsign) \(when)"
+                return "\(ride.route.name) toward \(countdown.headsign) \(Self.departures(countdown))"
             }
             return "At \(ride.board.name) · Waiting for the \(ride.route.name)"
         case .vehicleArriving(let leg, _):
@@ -599,6 +595,18 @@ import UIKit
             return "Get off here at \(ride(leg)?.alight.name ?? "this stop")"
         case .needsReplan(let reason): return reason
         case .arrived: return "You've arrived"
+        }
+    }
+
+    /// "now, then 8 and 14 min" — the first departure plus the next two.
+    static func departures(_ countdown: JourneyCoordinator.Countdown) -> String {
+        func minutes(_ seconds: Int) -> String { seconds < 60 ? "now" : "\(seconds / 60) min" }
+        let first = countdown.status ?? countdown.secondsAway.map { $0 < 60 ? "now" : "in \($0 / 60) min" } ?? ""
+        let rest = countdown.following.map(minutes)
+        switch rest.count {
+        case 0: return first
+        case 1: return "\(first), then \(rest[0])"
+        default: return "\(first), then \(rest[0]) and \(rest[1])"
         }
     }
 
