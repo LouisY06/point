@@ -78,7 +78,7 @@ struct DeviceSetupView: View {
                         Button("Test connection again") { connection.testConnection() }
                             .frame(minHeight: 44)
                     }
-                    Section("Glove pointing setup") {
+                    Section(connection.pointingReady ? "Glove pointing · Saved" : "Glove pointing setup") {
                         Text(connection.calibrationLevels).font(.subheadline.monospacedDigit())
                         if !connection.pointingReady {
                             Text("Fasten the sensor firmly to your glove and hold it still for a few seconds.")

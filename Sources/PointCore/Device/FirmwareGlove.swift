@@ -282,6 +282,15 @@ import Foundation
         return relativeReference.apply(to: reading)
     }
 
+    /// Restore fixed mounting geometry as soon as this glove negotiates orientation support.
+    /// Live sensor readiness still gates readings and haptics, not the saved mounting map.
+    @discardableResult public func restorePointingCalibration(from store: PointingCalibrationStore, for deviceID: UUID) -> Bool {
+        guard pointingCalibration == nil, supportsOrientation, connection == .ready,
+              let saved = store.load(for: deviceID) else { return false }
+        calibrate(saved)
+        return true
+    }
+
     public func calibrate(_ calibration: PointingCalibration) {
         guard supportsOrientation, connection == .ready else { return }
         pointingCalibration = calibration

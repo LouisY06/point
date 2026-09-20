@@ -39,3 +39,7 @@ On September 19, 2026 the matching S3 build was flashed with verified write hash
 The signed matching app was installed on the connected iPhone and launched in Device setup. All 123 Swift regression tests, firmware host tests, iPhone build and simulator build pass; the disconnected setup layout was reviewed in the simulator.
 
 Readiness follows [Bosch AN007 §3](https://www.bosch-sensortec.com/media/boschsensortec/downloads/application_notes_1/bst-bno055-an007.pdf): accelerometer calibration is optional and magnetometer level 2 is usable. The [Adafruit BNO055 guide](https://learn.adafruit.com/adafruit-bno055-absolute-orientation-sensor/device-calibration) explains why NDOF system level 0 is still blocked before north acquisition. Two-pose mounting checks and the forward-pointing gate remain required.
+
+### Saved setup and live gyro readiness
+
+A saved finger-axis mapping is restored when the same Bluetooth glove negotiates orientation support, even before its gyro settles. The setup section then shows **Glove pointing · Saved** and hides the down/up capture steps. Temporary gyro readiness is reported separately; it pauses directional guidance without deleting or withholding the mounting map. Once gyro readings settle, guidance can resume using that same map. Repeat the poses only after moving the sensor on the glove.

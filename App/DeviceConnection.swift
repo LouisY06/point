@@ -92,11 +92,10 @@ import PointCore
         let wasReady = sensorReady
         let setupBlock = glove.pointingSetupBlockingReason()
         let usable = setupBlock == nil
-        if usable, glove.pointingCalibration == nil, !capturingPose, firstPose == nil,
-           let id = peripheral?.identifier, let saved = mountingStore.load(for: id) {
-            // calibrate publishes a change; the nested update sees a non-nil mapping.
-            glove.calibrate(saved)
-            calibrationStatus = "Saved glove direction restored. Repeat setup only if the sensor moves on the glove."
+        if !capturingPose, firstPose == nil, let id = peripheral?.identifier,
+           glove.restorePointingCalibration(from: mountingStore, for: id) {
+            // Restoration publishes a change; nested updates see the loaded mapping.
+            calibrationStatus = "Finger direction saved. Repeat setup only if the sensor moves on the glove."
         }
         if sensorReady != usable { sensorReady = usable }
         if orientationSupported != glove.supportsOrientation { orientationSupported = glove.supportsOrientation }
@@ -110,12 +109,15 @@ import PointCore
             firstPose = nil
             if hasFirstPose { hasFirstPose = false }
             if capturingPose { cancelCapture() }
-            let status = setupBlock ?? "Connect your glove to begin."
+            let reason = setupBlock ?? "Connect your glove to begin."
+            let status = ready ? "Finger direction saved. \(reason)" : reason
             if calibrationStatus != status { calibrationStatus = status }
             return
         }
-        if !wasReady, !pointingReady, firstPose == nil {
-            calibrationStatus = "Glove ready. Point your finger straight down and capture the first pose."
+        if !wasReady, firstPose == nil {
+            calibrationStatus = ready
+                ? "Finger direction saved. Raise your hand and point forward."
+                : "Glove ready. Point your finger straight down and capture the first pose."
         }
         guard capturingPose, let sample = glove.orientation,
               observations.last?.timestamp != sample.timestamp else { return }

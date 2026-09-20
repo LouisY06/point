@@ -315,6 +315,42 @@ struct PointingCalibrationTests {
         }
     }
 
+    @Test func savedMappingRestoresBeforeGyroSettlesAndDoesNotResetOnEverySample() throws {
+        let suite = "PointMountRestoreTests.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = PointingCalibrationStore(defaults: defaults)
+        let device = UUID()
+        let saved = try calibration()
+        store.save(saved, for: device)
+        let glove = FirmwareGlove()
+        var packets: [Data] = []
+        glove.write = { packets.append($0) }
+        func respond(_ payload: [UInt8], at seconds: Double) {
+            var b = Array(packets.last!.prefix(7)); b[2] |= 0x80
+            glove.receive(Data(b + payload), now: epoch.addingTimeInterval(seconds))
+        }
+        #expect(!glove.restorePointingCalibration(from: store, for: device))
+        glove.beginLink(now: epoch)
+        respond([31], at: 0.01)
+        respond([0], at: 0.02)
+        glove.tick(now: epoch.addingTimeInterval(0.1))
+        // Matches the screenshot: system 0, gyro 0, accel 1, compass 3.
+        respond([0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x07, 1], at: 0.11)
+        #expect(!glove.restorePointingCalibration(from: store, for: UUID()))
+        #expect(glove.restorePointingCalibration(from: store, for: device))
+        #expect(glove.pointingCalibration?.finger == saved.finger)
+        #expect(glove.relativePointing(now: epoch.addingTimeInterval(0.12)) == nil)
+        #expect(glove.pointingSetupBlockingReason(now: epoch.addingTimeInterval(0.12)) != nil)
+        let reference = glove.relativeCalibrationID
+        #expect(!glove.restorePointingCalibration(from: store, for: device))
+        #expect(glove.relativeCalibrationID == reference)
+        glove.tick(now: epoch.addingTimeInterval(0.25))
+        respond([0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x37, 1], at: 0.26)
+        #expect(glove.relativePointing(now: epoch.addingTimeInterval(0.27)) != nil)
+        #expect(glove.relativeCalibrationID == reference)
+    }
+
     @Test func setupEnablesGloveAndHandDownBlocksAutomaticMotorButNotExplicitTest() throws {
         let glove = FirmwareGlove()
         var packets: [Data] = []
