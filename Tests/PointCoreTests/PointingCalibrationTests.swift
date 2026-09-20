@@ -16,6 +16,18 @@ private func samples(_ q: simd_quatd, start: Double, jitter: Double = 0) -> [Glo
         return .init(quaternion: quaternion(variation * q), timestamp: time, health: healthy)
     }
 }
+/// Little-endian int16 WXYZ at scale 16384, zero age, BNO055 source, levels and flags.
+private func orientationPayload(_ q: simd_quatd, levels: UInt8, flags: UInt8 = 1) -> [UInt8] {
+    var bytes: [UInt8] = []
+    for value in [q.real, q.imag.x, q.imag.y, q.imag.z] {
+        let scaled = UInt16(bitPattern: Int16((value * 16384).rounded()))
+        bytes += [UInt8(scaled & 0xFF), UInt8(scaled >> 8)]
+    }
+    return bytes + [0, 0, 1, levels, flags]
+}
+/// With the identity mount below, the finger hangs straight down in this pose.
+private let handDown = simd_quatd(angle: -.pi / 2, axis: SIMD3(1, 0, 0))
+private let handLifted = simd_quatd(angle: .pi / 2, axis: SIMD3(1, 0, 0))
 private func calibration(mount: simd_quatd = simd_quatd(angle: 0, axis: SIMD3(0, 0, 1))) throws -> PointingCalibration {
     let down = simd_quatd(angle: -.pi / 2, axis: SIMD3(1, 0, 0)) * mount
     let up = simd_quatd(angle: .pi / 2, axis: SIMD3(1, 0, 0)) * mount
@@ -241,14 +253,22 @@ struct PointingCalibrationTests {
         respond([0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x30, 1], at: 0.11)
         glove.calibrate(try calibration())
         let cue = HapticCommand.confirm(durationMs: 180, intensity: 160)
-        #expect(throws: GloveTransportError.self) { try glove.send(cue, now: epoch.addingTimeInterval(0.12)) }
-        try glove.sendRelativeDemo(cue, now: epoch.addingTimeInterval(0.12))
+        // A level hand without the raise gesture never arms the relaxed demo either.
+        glove.tick(now: epoch.addingTimeInterval(0.14))
+        respond([0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x30, 1], at: 0.15)
+        #expect(throws: GloveTransportError.self) { try glove.sendRelativeDemo(cue, now: epoch.addingTimeInterval(0.16)) }
+        glove.tick(now: epoch.addingTimeInterval(0.26))
+        respond(orientationPayload(handDown, levels: 0x30), at: 0.27)
+        glove.tick(now: epoch.addingTimeInterval(0.38))
+        respond([0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x30, 1], at: 0.39)
+        #expect(throws: GloveTransportError.self) { try glove.send(cue, now: epoch.addingTimeInterval(0.4)) }
+        try glove.sendRelativeDemo(cue, now: epoch.addingTimeInterval(0.4))
         #expect(packets.last?[2] == 3)
-        respond([0], at: 0.13)
-        glove.tick(now: epoch.addingTimeInterval(0.22))
-        respond([65, 45, 65, 45, 0, 0, 0, 0, 0, 0, 1, 0x30, 1], at: 0.23)
-        #expect(throws: GloveTransportError.self) { try glove.sendRelativeDemo(cue, now: epoch.addingTimeInterval(0.24)) }
-        glove.tick(now: epoch.addingTimeInterval(0.24))
+        respond([0], at: 0.41)
+        glove.tick(now: epoch.addingTimeInterval(0.5))
+        respond([65, 45, 65, 45, 0, 0, 0, 0, 0, 0, 1, 0x30, 1], at: 0.51)
+        #expect(throws: GloveTransportError.self) { try glove.sendRelativeDemo(cue, now: epoch.addingTimeInterval(0.52)) }
+        glove.tick(now: epoch.addingTimeInterval(0.52))
         #expect(packets.last?[2] == 3 && packets.last?[7] == 0)
         #expect(glove.lastHeading == nil)
     }
@@ -271,7 +291,8 @@ struct PointingCalibrationTests {
         #expect(glove.pointingSetupBlockingReason(now: epoch.addingTimeInterval(0.12)) == nil)
         #expect(glove.pointingSetupBlockingReason(now: epoch.addingTimeInterval(0.7)) != nil)
         glove.calibrate(try calibration())
-        poll(0x3D, at: 0.25)
+        glove.tick(now: epoch.addingTimeInterval(0.25))
+        respond(orientationPayload(handDown, levels: 0x3D), at: 0.26)
         #expect(glove.pointingCalibration != nil && glove.lastHeading == nil)
         #expect(throws: GloveTransportError.self) { try glove.send(.vehicleArrived, now: epoch.addingTimeInterval(0.27)) }
         glove.northCorrection = MagneticNorthCorrection(trueHeading: 5, magneticHeading: 0, accuracy: 2, timestamp: epoch)
@@ -345,9 +366,12 @@ struct PointingCalibrationTests {
         let reference = glove.relativeCalibrationID
         #expect(!glove.restorePointingCalibration(from: store, for: device))
         #expect(glove.relativeCalibrationID == reference)
-        glove.tick(now: epoch.addingTimeInterval(0.25))
-        respond([0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x37, 1], at: 0.26)
-        #expect(glove.relativePointing(now: epoch.addingTimeInterval(0.27)) != nil)
+        glove.tick(now: epoch.addingTimeInterval(0.21))
+        respond(orientationPayload(handDown, levels: 0x37), at: 0.22)
+        #expect(glove.relativePointing(now: epoch.addingTimeInterval(0.23)) == nil)
+        glove.tick(now: epoch.addingTimeInterval(0.32))
+        respond([0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x37, 1], at: 0.33)
+        #expect(glove.relativePointing(now: epoch.addingTimeInterval(0.34)) != nil)
         #expect(glove.relativeCalibrationID == reference)
     }
 
@@ -368,24 +392,76 @@ struct PointingCalibrationTests {
         #expect(glove.lastHeading == nil)
         glove.calibrate(try calibration())
         glove.northCorrection = MagneticNorthCorrection(trueHeading: 5, magneticHeading: 0, accuracy: 2, timestamp: epoch)
-        glove.tick(now: epoch.addingTimeInterval(0.25))
-        respond([0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x72, 1], at: 0.26)
-        #expect(glove.lastHeading?.degrees == 5)
-        try glove.send(.confirm(durationMs: 180, intensity: 160), now: epoch.addingTimeInterval(0.27))
-        respond([0], at: 0.28)
-        glove.tick(now: epoch.addingTimeInterval(0.4))
-        // 90° pitch about X: the Y-axis finger is now vertical.
-        respond([65, 45, 65, 45, 0, 0, 0, 0, 0, 0, 1, 0x72, 1], at: 0.41)
+        glove.tick(now: epoch.addingTimeInterval(0.21))
+        respond(orientationPayload(handDown, levels: 0x72), at: 0.22)
         #expect(glove.lastHeading == nil)
-        #expect(glove.magneticPointing(now: epoch.addingTimeInterval(0.42)) == nil)
-        #expect(throws: GloveTransportError.self) { try glove.send(.vehicleArrived, now: epoch.addingTimeInterval(0.42)) }
-        glove.tick(now: epoch.addingTimeInterval(0.42))
+        glove.tick(now: epoch.addingTimeInterval(0.32))
+        respond([0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x72, 1], at: 0.33)
+        #expect(glove.lastHeading?.degrees == 5)
+        try glove.send(.confirm(durationMs: 180, intensity: 160), now: epoch.addingTimeInterval(0.34))
+        respond([0], at: 0.35)
+        glove.tick(now: epoch.addingTimeInterval(0.45))
+        // 90° pitch about X: the Y-axis finger is now vertical.
+        respond([65, 45, 65, 45, 0, 0, 0, 0, 0, 0, 1, 0x72, 1], at: 0.46)
+        #expect(glove.lastHeading == nil)
+        #expect(glove.magneticPointing(now: epoch.addingTimeInterval(0.47)) == nil)
+        #expect(throws: GloveTransportError.self) { try glove.send(.vehicleArrived, now: epoch.addingTimeInterval(0.47)) }
+        glove.tick(now: epoch.addingTimeInterval(0.47))
         #expect(packets.last?[7] == 0) // Hand-down stops a running automatic pulse.
-        respond([0], at: 0.425)
-        try glove.testMotor(now: epoch.addingTimeInterval(0.43))
+        respond([0], at: 0.475)
+        try glove.testMotor(now: epoch.addingTimeInterval(0.48))
         #expect(packets.last?[2] == 3 && packets.last?[7] == 1)
         let oldID = glove.calibrationID
         glove.disconnect()
         #expect(glove.pointingCalibration == nil && glove.orientation == nil && glove.calibrationID != oldID)
+    }
+
+    @Test func levelHandWithoutGestureNeverArmsAndCyclingLiftOpensATimedWindow() throws {
+        let glove = FirmwareGlove()
+        var packets: [Data] = []
+        glove.write = { packets.append($0) }
+        func respond(_ payload: [UInt8], at seconds: Double) {
+            var header = Array(packets.last!.prefix(7)); header[2] |= 0x80
+            glove.receive(Data(header + payload), now: epoch.addingTimeInterval(seconds))
+        }
+        func poll(_ payload: [UInt8], at seconds: Double) {
+            glove.tick(now: epoch.addingTimeInterval(seconds))
+            respond(payload, at: seconds + 0.01)
+        }
+        let level: [UInt8] = [0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x72, 1]
+        let lifted = orientationPayload(handLifted, levels: 0x72)
+        glove.travelMode = .cycling
+        glove.beginLink(now: epoch)
+        respond([31], at: 0.01); respond([0], at: 0.02)
+        glove.calibrate(try calibration())
+        glove.northCorrection = MagneticNorthCorrection(trueHeading: 5, magneticHeading: 0, accuracy: 2, timestamp: epoch)
+        for seconds in [0.1, 0.2, 0.3] { poll(level, at: seconds) }
+        #expect(glove.lastHeading == nil && glove.message == glove.pointingIntentReason && !glove.pointingArmed(now: epoch.addingTimeInterval(0.31)))
+        poll(lifted, at: 0.4)
+        poll(level, at: 0.5) // Too short a lift.
+        #expect(glove.lastHeading == nil)
+        poll(lifted, at: 0.6); poll(lifted, at: 0.75); poll(lifted, at: 0.9)
+        #expect(glove.lastHeading == nil) // Lifted is outside the level band.
+        poll(level, at: 1.0)
+        #expect(glove.lastHeading?.degrees == 5 && glove.pointingArmed(now: epoch.addingTimeInterval(1.02)))
+        try glove.send(.confirm(durationMs: 180, intensity: 160), now: epoch.addingTimeInterval(1.02))
+        #expect(packets.last?[2] == 3 && packets.last?[7] == 1)
+        respond([0], at: 1.03)
+        glove.northCorrection = MagneticNorthCorrection(trueHeading: 5, magneticHeading: 0, accuracy: 2, timestamp: epoch.addingTimeInterval(1.1))
+        var seconds = 1.15
+        while seconds < 4.9 { poll(level, at: seconds); seconds += 0.15 }
+        #expect(glove.lastHeading?.degrees == 5) // The hand stayed on the bar inside the window.
+        poll(level, at: 5.2)
+        #expect(glove.lastHeading == nil && glove.message == glove.pointingIntentReason)
+        // Switching mode drops the cycling window; walking needs the raise instead.
+        poll(lifted, at: 5.35); poll(lifted, at: 5.5); poll(lifted, at: 5.65); poll(level, at: 5.8)
+        #expect(glove.lastHeading?.degrees == 5)
+        glove.setTravelMode(.walking, now: epoch.addingTimeInterval(5.85))
+        glove.northCorrection = MagneticNorthCorrection(trueHeading: 5, magneticHeading: 0, accuracy: 2, timestamp: epoch.addingTimeInterval(5.9))
+        poll(level, at: 5.95)
+        #expect(glove.lastHeading == nil)
+        poll(orientationPayload(handDown, levels: 0x72), at: 6.1)
+        poll(level, at: 6.25)
+        #expect(glove.lastHeading?.degrees == 5)
     }
 }

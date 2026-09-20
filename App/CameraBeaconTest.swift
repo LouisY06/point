@@ -286,7 +286,8 @@ import SwiftUI
         guard glove.pointingCalibration != nil else { return "Set up your glove’s finger direction first." }
         if let reason = glove.pointingSetupBlockingReason() { return reason }
         if !relaxedDemo, let reason = glove.sensorHealth?.fusionBlockingReason { return reason }
-        guard pointingReading != nil else { return "Raise your glove and point forward." }
+        guard glove.pointingArmed() else { return glove.pointingIntentReason + "." }
+        guard pointingReading != nil else { return "Keep your glove level and point forward." }
         return nil
     }
 
@@ -660,7 +661,9 @@ import SwiftUI
             lines.append("Calibration system/gyro/accel/compass: \(h.system)/\(h.gyro)/\(h.accelerometer)/\(h.magnetometer) · Health: \(h.flags)")
             if let mount = glove?.pointingCalibration {
                 let finger = sample.quaternion.rotate(mount.finger)
-                lines.append(String(format: "Finger elevation: %.1f° · Forward gate: %@", asin(max(-1, min(1, finger.z))) * 180 / .pi, GloveQuaternion.isForward(finger) ? "OPEN" : "CLOSED"))
+                lines.append(String(format: "Pointing elevation: %.1f° · Level gate: %@ · Intent (%@): %@",
+                                    GloveQuaternion.elevationDegrees(finger) ?? .nan, GloveQuaternion.isForward(finger) ? "OPEN" : "CLOSED",
+                                    glove?.travelMode.rawValue ?? "?", glove?.pointingArmed() == true ? "ARMED" : "IDLE"))
                 if let direction = GloveQuaternion.heading(finger) {
                     lines.append(String(format: "Finger bearing: %.1f° (sensor reference)", direction))
                 }

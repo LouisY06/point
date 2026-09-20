@@ -23,6 +23,12 @@ public struct GloveQuaternion: Equatable {
         let length = simd_length(vector)
         return length.isFinite && length > 0.9 && abs(vector.z / length) <= sin(.pi / 6)
     }
+    /// Degrees of the pointing axis above horizontal; nil for a non-unit vector.
+    public static func elevationDegrees(_ vector: SIMD3<Double>) -> Double? {
+        let length = simd_length(vector)
+        guard length.isFinite, length > 0.9 else { return nil }
+        return asin(max(-1, min(1, vector.z / length))) * 180 / .pi
+    }
     public static func heading(_ vector: SIMD3<Double>) -> Double? {
         guard simd_length(vector).isFinite, hypot(vector.x, vector.y) >= 0.35 else { return nil }
         return (atan2(vector.x, vector.y) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)

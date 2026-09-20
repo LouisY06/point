@@ -36,6 +36,8 @@ public enum HapticCommand: Equatable {
 
 @MainActor public protocol GloveTransport: AnyObject {
     var connection: GloveConnection { get }
+    /// Selects the arming gesture for automatic pointing cues. See `PointingIntentGate`.
+    var travelMode: TravelMode { get set }
     var onEvent: ((GloveEvent) -> Void)? { get set }
     func connect()
     func disconnect()
@@ -47,6 +49,7 @@ public enum GloveTransportError: Error { case notConnected, unsupported, busy }
 /// Develop UI, route progression and feedback without access to a glove.
 @MainActor public final class SimulatedGlove: GloveTransport {
     public private(set) var connection: GloveConnection = .disconnected
+    public var travelMode: TravelMode = .walking
     public var onEvent: ((GloveEvent) -> Void)?
     public private(set) var commands: [HapticCommand] = []
 

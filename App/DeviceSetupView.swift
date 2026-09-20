@@ -1,7 +1,9 @@
+import PointCore
 import SwiftUI
 
 struct DeviceSetupView: View {
     @ObservedObject var connection: DeviceConnection
+    @AppStorage(PointViewModel.travelModeKey) private var travelMode = TravelMode.walking.rawValue
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
@@ -97,6 +99,16 @@ struct DeviceSetupView: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     Section("Glove guidance") {
+                        Picker("Travel", selection: $travelMode) {
+                            Text("Walking").tag(TravelMode.walking.rawValue)
+                            Text("Cycling").tag(TravelMode.cycling.rawValue)
+                        }
+                        .pickerStyle(.segmented)
+                        .accessibilityLabel("How you travel")
+                        Text(travelMode == TravelMode.cycling.rawValue
+                             ? "Cycling: lift your hand up off the bar for a moment, then point forward. Vibration is available for about four seconds, because a hand resting on the bar already looks level."
+                             : "Walking: lower your hand, then raise it and point forward. Lower it again to stop. Sustained riding speed switches to the cycling gesture automatically.")
+                            .font(.footnote).foregroundStyle(.secondary)
                         if let sensor = connection.sensorSummary { Text(sensor).foregroundStyle(.secondary) }
                         Text(connection.firmwareMessage)
                         if connection.canTestMotor {

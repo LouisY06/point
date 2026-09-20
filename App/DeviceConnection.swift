@@ -72,7 +72,8 @@ import PointCore
             else if !ready { indoorMessage = "Glove motor unavailable. Check Device setup." }
             else if self.glove.pointingCalibration == nil { indoorMessage = "Set up the glove’s pointing direction before starting guidance." }
             else if let reason = self.glove.sensorHealth?.fusionBlockingReason { indoorMessage = reason }
-            else if !indoorReady { indoorMessage = "Raise your hand and point forward to align the glove with the room." }
+            else if !self.glove.pointingArmed() { indoorMessage = self.glove.pointingIntentReason + "." }
+            else if !indoorReady { indoorMessage = "Keep your hand level and point forward to align the glove with the room." }
             else { indoorMessage = "Glove ready for room guidance." }
             if self.indoorGuidanceMessage != indoorMessage { self.indoorGuidanceMessage = indoorMessage }
             let sensor = self.glove.sensorHealth.map {

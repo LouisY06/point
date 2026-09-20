@@ -10,6 +10,13 @@ import Foundation
     @Published public private(set) var connection: GloveConnection = .disconnected
     @Published public private(set) var batteryPercent: Int?
     @Published public private(set) var lastTransportError: String?
+    /// The mode actually applied to the glove: the chosen mode, or cycling once sustained speed says so.
+    @Published public private(set) var effectiveTravelMode: TravelMode = .walking
+    /// Chosen by the wearer. Walking may be overridden to cycling by sustained GPS speed,
+    /// because the walking gesture would buzz continuously with a hand resting on a handlebar.
+    public var travelMode: TravelMode = .walking {
+        didSet { clearSpeedOverride(); applyTravelMode() }
+    }
 
     private var capabilities: GloveCapabilities?
     private var gloveHeading: HeadingReading?
@@ -19,12 +26,20 @@ import Foundation
     private var routeRequestID = UUID()
     private var lastGestureAt: Date?
     private var outputEnabled = true
+    private var speedOverride: TravelMode?
+    private var fastSince: Date?
+    private var slowSince: Date?
+    /// Sustained speed thresholds (m/s) and dwell for the automatic cycling override.
+    public static let cyclingSpeed = 4.0
+    public static let walkingSpeed = 2.0
+    public static let speedDwell: TimeInterval = 5
 
     public init(glove: any GloveTransport) {
         self.glove = glove
         navigation = NavigationSession()
         connection = glove.connection
         glove.onEvent = { [weak self] event in self?.receive(event) }
+        applyTravelMode()
     }
 
     /// Real navigation uses hardware; the explicit sample route uses a simulator. Never transfer heading or pending cues between devices.
@@ -38,6 +53,8 @@ import Foundation
         batteryPercent = nil
         lastGestureAt = nil
         lastTransportError = nil
+        clearSpeedOverride()
+        applyTravelMode()
         glove.onEvent = { [weak self] event in self?.receive(event) }
         if activate { glove.connect() }
         else { glove.disconnect(); tick() }
@@ -60,7 +77,44 @@ import Foundation
         routeRequestID = UUID()
         navigation.stop()
         resetFeedback()
+        clearSpeedOverride()
+        applyTravelMode()
         tick()
+    }
+
+    private func clearSpeedOverride() {
+        speedOverride = nil
+        fastSince = nil
+        slowSince = nil
+    }
+
+    private func applyTravelMode() {
+        let mode = speedOverride ?? travelMode
+        if effectiveTravelMode != mode { effectiveTravelMode = mode }
+        if glove.travelMode != mode { glove.travelMode = mode }
+    }
+
+    /// Only a walking choice is overridden, and only after sustained speed, never a single fix.
+    private func observeSpeed(_ location: CLLocation, now: Date) {
+        guard travelMode == .walking, location.speed.isFinite, location.speed >= 0 else { return }
+        if location.speed >= Self.cyclingSpeed {
+            slowSince = nil
+            if fastSince == nil { fastSince = now }
+            if speedOverride == nil, now.timeIntervalSince(fastSince!) >= Self.speedDwell {
+                speedOverride = .cycling
+                applyTravelMode()
+            }
+        } else if location.speed <= Self.walkingSpeed {
+            fastSince = nil
+            if slowSince == nil { slowSince = now }
+            if speedOverride != nil, now.timeIntervalSince(slowSince!) >= Self.speedDwell {
+                speedOverride = nil
+                applyTravelMode()
+            }
+        } else {
+            fastSince = nil
+            slowSince = nil
+        }
     }
 
     /// Guards against an in-flight reroute reviving a stopped/replaced journey.
@@ -77,6 +131,7 @@ import Foundation
     }
 
     @discardableResult public func updateLocation(_ location: CLLocation, now: Date = Date()) -> BeaconArrival? {
+        observeSpeed(location, now: now)
         let arrival = navigation.updateLocation(location, now: now)
         tick(now: now)
         return arrival

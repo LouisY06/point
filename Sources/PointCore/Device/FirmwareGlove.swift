@@ -37,8 +37,26 @@ import Foundation
     private var motorBusyUntil = Date.distantPast
     private var automaticMotorUntil = Date.distantPast
     private var automaticRelativeDemo = false
+    private var intent = PointingIntentGate()
 
     public init() {}
+
+    /// Automatic cues need a deliberate gesture first; the gesture depends on how the
+    /// wearer travels. Switching discards any open window and stops a running cue.
+    public var travelMode: TravelMode {
+        get { intent.mode }
+        set { setTravelMode(newValue) }
+    }
+
+    public func setTravelMode(_ mode: TravelMode, now: Date = Date()) {
+        guard mode != intent.mode else { return }
+        intent.setMode(mode)
+        if connection == .ready { tick(now: now) }
+        onChange?()
+    }
+
+    public func pointingArmed(now: Date = Date()) -> Bool { intent.isArmed(now: now) }
+    public var pointingIntentReason: String { intent.blockingReason }
 
     /// Called only after the physical BLE link has passed its echo test.
     public func beginLink(now: Date = Date()) {
@@ -72,6 +90,7 @@ import Foundation
         onHeadingChange?(nil)
         northCorrection = nil
         lastMotorAcknowledgement = nil
+        intent.reset()
         supportsArrival = false
         supportsAttitude = false
         supportsOrientation = false
@@ -205,6 +224,10 @@ import Foundation
                 timestamp: now.addingTimeInterval(-(elapsed + age)), health: health)
             relativeReference.update(previous: orientation, current: sample)
             orientation = sample
+            if let pointingCalibration, health.mountingBlockingReason == nil,
+               let elevation = GloveQuaternion.elevationDegrees(quaternion.rotate(pointingCalibration.finger)) {
+                intent.update(elevationDegrees: elevation, now: now)
+            }
             if !previouslyNorthReady, health.fusionBlockingReason == nil { calibrationID = UUID() }
             if let reason = health.mountingBlockingReason {
                 // A temporary sensor-quality dip does not change the physical mounting.
@@ -223,6 +246,7 @@ import Foundation
             guard let magnetic = pointingCalibration.magneticHeading(sample, now: now) else {
                 invalidateHeading("Raise your hand and point forward · Keep your finger within 30° of level"); onChange?(); return
             }
+            guard intent.isArmed(now: now) else { invalidateHeading(intent.blockingReason); onChange?(); return }
             guard let reading = northCorrection?.apply(to: magnetic, now: now), reading.accuracyDegrees <= 25 else {
                 invalidateHeading("Waiting for an accurate true-north correction"); onChange?(); return
             }
@@ -272,12 +296,12 @@ import Foundation
     }
 
     public func magneticPointing(now: Date = Date()) -> HeadingReading? {
-        guard connection == .ready, let orientation else { return nil }
+        guard connection == .ready, let orientation, intent.isArmed(now: now) else { return nil }
         return pointingCalibration?.magneticHeading(orientation, now: now)
     }
 
     public func relativePointing(now: Date = Date()) -> HeadingReading? {
-        guard connection == .ready, let orientation else { return nil }
+        guard connection == .ready, let orientation, intent.isArmed(now: now) else { return nil }
         guard let reading = pointingCalibration?.relativeHeading(orientation, now: now) else { return nil }
         return relativeReference.apply(to: reading)
     }
@@ -297,6 +321,7 @@ import Foundation
         calibrationID = UUID()
         relativeCalibrationID = UUID()
         relativeReference = RelativeOrientationReference()
+        intent.reset()
         invalidateHeading("Checking calibrated glove direction…")
         onChange?()
     }
@@ -306,6 +331,7 @@ import Foundation
         calibrationID = UUID()
         relativeCalibrationID = UUID()
         relativeReference = RelativeOrientationReference()
+        intent.reset()
         invalidateHeading("Glove pointing orientation needs setup")
         try? send(.stop)
         onChange?()
@@ -346,6 +372,7 @@ import Foundation
         relativeReference = RelativeOrientationReference()
         onHeadingChange?(nil)
         northCorrection = nil
+        intent.reset()
         state = .failed
         connection = .disconnected
         message = text

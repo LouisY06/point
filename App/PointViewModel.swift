@@ -96,6 +96,11 @@ import UIKit
         #endif
         super.init()
         controller = PointController(glove: deviceConnection.glove)
+        applyTravelModeSetting()
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.applyTravelModeSetting() }
+            .store(in: &subscriptions)
         deviceConnection.glove.onHeadingChange = { [weak self] reading in
             if let reading { self?.mapTelemetry.receive(reading) }
             else { self?.mapTelemetry.clearHeading() }
@@ -859,6 +864,19 @@ import UIKit
             if !isDemo, let currentLocation { controller.updateLocation(currentLocation) }
             announce(isDemo ? "Demo started. Try the pointing control." : "Navigation started. \(deviceConnection.firmwareMessage).")
         } catch { fail(error) }
+    }
+
+    static let travelModeKey = "point.travel-mode"
+
+    /// Device setup stores the wearer's choice; the controller may still promote walking to
+    /// cycling on sustained speed. The real glove is updated directly too, so the indoor demo
+    /// follows the setting while the controller holds the sample-route simulator.
+    private func applyTravelModeSetting() {
+        let mode = TravelMode(rawValue: UserDefaults.standard.string(forKey: Self.travelModeKey) ?? "") ?? .walking
+        if controller.travelMode != mode { controller.travelMode = mode }
+        if deviceConnection.glove.travelMode != controller.effectiveTravelMode {
+            deviceConnection.glove.travelMode = controller.effectiveTravelMode
+        }
     }
 
     private func startGloveWatchdog() {

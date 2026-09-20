@@ -24,7 +24,7 @@ BLE packet timestamps need translation to a phone clock, or bounded latency/age 
 - `stop`: stop confirmation immediately.
 - `vehicleArrived`: in public-transportation mode, our bus/train is at the platform, or it is time to get off. A recognisably different, finite pattern from `confirm` (the phone stand-in plays four 120 ms pulses); the firmware chooses the motor sequence and must end it locally. It is never sent while pointing feedback is active.
 
-There are no left/right vibration codes in this version. Current demo tuning is 180 ms per pulse, at most once per 900 ms, after roughly 350 ms stable alignment. These values are placeholders for physical trials, not motor-specific calibration. A single ERM motor is enough for this semantic interface; the firmware decides how to drive its actual motor/driver.
+Automatic cues are additionally gated on the phone by an arming gesture derived from the hand's orientation (raise from hanging when walking; lift then level when cycling), because the single back-of-hand IMU cannot distinguish pointing from a handlebar grip. No firmware gesture event is needed for this. There are no left/right vibration codes in this version. Current demo tuning is 180 ms per pulse, at most once per 900 ms, after roughly 350 ms stable alignment. These values are placeholders for physical trials, not motor-specific calibration. A single ERM motor is enough for this semantic interface; the firmware decides how to drive its actual motor/driver.
 
 Firmware must stop a finite pulse locally even if Bluetooth disconnects or iOS suspends the app. Clear queued cues after reconnect and require fresh heading. Navigation remains visible without the glove; it must not claim haptic feedback is working.
 
