@@ -99,7 +99,9 @@ import Foundation
             gloveHeading = reading
         case .headingUnavailable:
             gloveHeading = nil
-            resetFeedback()
+            // Waiting/riding alerts do not depend on heading. Losing the pointing
+            // reference must not truncate a transit pattern already playing.
+            if navigation.state == .navigating { resetFeedback() }
         case .battery(let percent): batteryPercent = (0...100).contains(percent) ? percent : nil
         case .gesture(let gesture):
             guard connection == .ready, capabilities?.gestures == true,

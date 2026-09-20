@@ -34,7 +34,7 @@ There is no mode switch. A walk of up to about 10 minutes just walks. Anything l
 
 - guides you with normal beacons to the stop; the last one sits **on the stop to board** and is **green**, the stop to get off is **red**, and the ride between them is a solid line (subway lines in their MBTA colours, buses in slate blue) with no beacons;
 - stops all pointing feedback while you wait and ride;
-- watches live MBTA predictions for **your line, direction and branch**, and plays a distinct **four-pulse buzz** when your vehicle is at the platform, then again when it is time to get off;
+- watches live MBTA predictions for **your line, direction and branch**, and plays a distinct **three-pulse buzz** when your vehicle is at the platform, then again when it is time to get off;
 - boards and alights automatically from vehicle tracking, with **I'm at the stop / I'm on board / Not on board / I'm off** as overrides;
 - handles transfers at rapid-transit stations the same way, and holds walking instructions after you step off until GPS returns outside;
 - says when live data or GPS is lost and when it returns, and offers **Replan** if you seem to be on the wrong train or missed your stop.
@@ -45,7 +45,7 @@ No key is required (20 MBTA requests/min); add `MBTA_API_KEY` to `.env` for the 
 
 For the indoor demo, say **“Can you go into demo mode?”** (or type it). The default is **one beacon**: point the glove at the camera marker while placing it, start the pointing test, and pocket the phone. Stay in the same spot and turn/point; the camera stops and no phone motion is integrated. This removes walking-estimate drift, but glove heading can still drift. Orientation logs include a motor-mute switch for comparison. Touch guard and the Live Activity remain available. The previous four-beacon walking experiment is retained in demo settings by turning off **Single beacon pointing test**. See [indoor demo](docs/INDOOR_DEMO.md).
 
-Open **Device setup**, connect **Point S3**, and complete the two-pose pointing setup. Live map arrows and guidance use the glove IMU/magnetometer; automatic vibration requires the finger within 30° of level. A lowered hand stays silent. Phone-as-glove controls have been removed. See [glove setup](docs/DEVICE_SETUP.md).
+Open **Device setup**, connect **Point S3**, and complete the two-pose pointing setup. Live map arrows and guidance use the glove IMU/magnetometer; directional vibration requires the finger within 30° of level. Lowering your hand silences direction guidance; transit alerts still play. Phone-as-glove controls have been removed. See [glove setup](docs/DEVICE_SETUP.md).
 
 The current glove uses **ESP32-S3 + BNO055 primary compass + MPU6050 backup + DRV2605L**. See [the updated hardware README](Firmware/README.md) and [app/firmware integration contract](docs/FIRMWARE_APP_PROTOCOL.md). The original circuit sketch remains USB-only. The new [S3 ESP-IDF firmware](Firmware/S3Firmware/README.md) has been uploaded and passed BLE/sensor/motor-command bench checks; the matching app implements quaternion mounting calibration. Physical pointing, vibration and iPhone-to-glove end-to-end validation remain pending.
 

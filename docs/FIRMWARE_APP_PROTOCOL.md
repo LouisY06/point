@@ -148,7 +148,7 @@ Capture needs ≥12 distinct samples spanning 1.2–3 seconds, ≤350 ms intersa
 
 Gravity-pose setup requires healthy BNO055 orientation and gyro=3, independently of magnetometer/system calibration. Magnetic navigation additionally requires system >0 and magnetometer ≥2. Accelerometer calibration is optional (Bosch AN007 §3), so setup does not require six-face motion or overall system=3. The app persists validated mounting geometry in a versioned local record per Bluetooth device. Live transport mounting clears on disconnect, a health fault or loss of gyro readiness, then DeviceConnection restores the saved geometry after fresh mounting-ready readings return. Manual setup reset deletes the saved record before clearing live mounting. New firmware axis conventions require a new record version or explicit recalibration. Changes to accelerometer, compass or system calibration levels do not reset mounting. Loss of magnetic readiness still clears navigation heading and invalidates the room-alignment identity, because magnetic yaw may change when north is reacquired. Pose spread, disagreement and the provisional compass allowance form an operational estimate, not a measured accuracy guarantee. Repeated field measurements across wrist rotations and magnetic environments remain necessary.
 
-Normal pointing requires finger elevation within ±30° of horizontal. Lowering the hand, pointing vertically, sensor failure, or stale data clears the arrow and automatic haptics. The transport rechecks pending cues before sending and sends STOP if a running automatic cue loses the gate. Finite firmware duration bounds output between sensor polls. The explicit setup motor test bypasses the pointing gate by design.
+Normal pointing requires finger elevation within ±30° of horizontal. Lowering the hand, pointing vertically, sensor failure, or stale data clears the arrow and directional haptics. The transport rechecks pending direction cues before sending and sends STOP if a running direction cue loses the gate. Finite firmware duration bounds output between sensor polls. Transit arrival/alighting alerts and the explicit setup motor test bypass the pointing gate by design. Connection, negotiated motor capability, hardware-reset exclusion and explicit STOP still apply. The app retains an 830 ms arrival cooldown for compatibility with older four-pulse firmware; updating the glove firmware is required to hear three pulses.
 
 Indoor guidance uses the same calibrated magnetic finger vector with an explicit stable reference toward room beacon 1 (≥1 m away). It does not combine AR-local bearings directly with global compass bearings. AR reset or a changed glove calibration identity invalidates this room alignment.
 
@@ -194,8 +194,8 @@ STOP and vehicle-arrived require zero duration/intensity fields.
 Confirmation accepts 1–350 ms; outdoor navigation sends 180 ms at intensity 160,
 at most once per 900 ms after stable alignment. Intensity is a requested scale;
 firmware owns motor-specific calibration. Do not translate it to unverified electrical
-drive settings. Vehicle-arrived: four 120 ms pulses separated by 100 ms silence,
-maximum intensity 160, total 780 ms, finishing locally. No left/right encoding.
+drive settings. Vehicle-arrived: three 120 ms pulses separated by 100 ms silence,
+maximum intensity 160, total 560 ms, finishing locally. No left/right encoding.
 Indoor guidance requests eased 180 ms pulses (full angular target within 10°, zero outside 35°, capped at 204), no faster than 5 Hz. The app also spaces actual sends by pulse duration plus 50 ms so deferred requests cannot overlap the firmware motor timeline.
 
 Response: 8 bytes, payload 0 accepted or 1 rejected. GATT write success alone is

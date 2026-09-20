@@ -112,14 +112,15 @@ import Foundation
 
     public func send(_ command: HapticCommand) throws { try send(command, now: Date()) }
 
-    /// Explicit setup test only; automatic cues always require a raised, forward finger.
+    /// Explicit setup test; like transit alerts, it does not require pointing forward.
     public func testMotor(now: Date = Date()) throws {
         guard now >= motorBusyUntil else { throw GloveTransportError.busy }
         try enqueue(.confirm(durationMs: 180, intensity: 160), now: now, requiresPointing: false)
     }
 
     public func send(_ command: HapticCommand, now: Date) throws {
-        try enqueue(command, now: now, requiresPointing: true)
+        // Transit alerts must be felt while waiting with the hand lowered, too.
+        try enqueue(command, now: now, requiresPointing: command != .vehicleArrived)
     }
 
     /// Only the explicitly aligned indoor demo may use relative yaw. Outdoor send
@@ -186,6 +187,8 @@ import Foundation
                     motorBusyUntil = now.addingTimeInterval(Double(duration) / 1000 + 0.05)
                     automaticMotorUntil = next.requiresPointing ? motorBusyUntil : .distantPast
                 case .vehicleArrived:
+                    // Keep the older four-pulse firmware's cooldown until it is updated.
+                    // Current firmware plays three pulses in 560 ms with the same command.
                     motorBusyUntil = now.addingTimeInterval(0.83)
                     automaticMotorUntil = next.requiresPointing ? motorBusyUntil : .distantPast
                 }
@@ -250,7 +253,7 @@ import Foundation
             if !previouslyNorthReady, health.fusionBlockingReason == nil { calibrationID = UUID() }
             if let reason = health.mountingBlockingReason {
                 // A temporary sensor-quality dip does not change the physical mounting.
-                // Retain the mapping while health gates all automatic haptics.
+                // Retain the mapping while health gates directional haptics.
                 invalidateHeading(reason); onChange?(); return
             }
             if let reason = health.fusionBlockingReason {

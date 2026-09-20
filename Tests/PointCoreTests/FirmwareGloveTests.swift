@@ -26,6 +26,31 @@ import Testing
 }
 
 @MainActor struct FirmwareGloveTests {
+    @Test func transitAlertWorksWithoutMountingOrHeadingButDirectionStillRequiresThem() throws {
+        let r = FirmwareRig(); r.ready(flags: 31)
+        #expect(r.glove.pointingCalibration == nil && r.glove.orientation == nil)
+        #expect(throws: GloveTransportError.self) {
+            try r.glove.send(.confirm(durationMs: 180, intensity: 160), now: r.time(0.04))
+        }
+        try r.glove.send(.vehicleArrived, now: r.time(0.04))
+        #expect(Array(r.packets.last!.suffix(4)) == [2, 0, 0, 0])
+    }
+
+    @Test func headingLossWhileWaitingDoesNotTruncateTransitAlert() {
+        let glove = SimulatedGlove()
+        let controller = PointController(glove: glove)
+        glove.connect()
+        controller.receive(.heading(.init(degrees: 0, accuracyDegrees: 2, timestamp: Date(), reference: .trueNorth)))
+        controller.emit(.vehicleArrived)
+        #expect(glove.commands.last == .vehicleArrived)
+        let count = glove.commands.count
+        controller.receive(.headingUnavailable)
+        controller.tick()
+        #expect(glove.commands.count == count)
+        controller.stop()
+        #expect(glove.commands.last == .stop)
+    }
+
     @Test func hardwareCalibrationRequiresNegotiatedSupportAndValidReply() throws {
         let legacy = FirmwareRig(); legacy.ready(flags: 31)
         #expect(!legacy.glove.supportsHardwareCalibration)

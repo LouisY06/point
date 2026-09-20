@@ -277,7 +277,7 @@ struct PointingCalibrationTests {
         glove.calibrate(try calibration())
         poll(0x3D, at: 0.25)
         #expect(glove.pointingCalibration != nil && glove.lastHeading == nil)
-        #expect(throws: GloveTransportError.self) { try glove.send(.vehicleArrived, now: epoch.addingTimeInterval(0.27)) }
+        #expect(throws: GloveTransportError.self) { try glove.send(.confirm(durationMs: 180, intensity: 160), now: epoch.addingTimeInterval(0.27)) }
         glove.northCorrection = MagneticNorthCorrection(trueHeading: 5, magneticHeading: 0, accuracy: 2, timestamp: epoch)
         poll(0x72, at: 0.4)
         #expect(glove.lastHeading?.degrees == 5)
@@ -346,6 +346,7 @@ struct PointingCalibrationTests {
         #expect(packets.last?[2] == 6)
         respond([0], at: 0.16)
         #expect(throws: GloveTransportError.self) { try glove.testMotor(now: epoch.addingTimeInterval(0.17)) }
+        #expect(throws: GloveTransportError.self) { try glove.send(.vehicleArrived, now: epoch.addingTimeInterval(0.17)) }
         glove.tick(now: epoch.addingTimeInterval(0.25))
         respond([0,64,0,0,0,0,0,0,255,255,1,0,0], at: 0.26)
         #expect(glove.hardwareCalibrationInProgress && glove.orientation == nil)
@@ -419,7 +420,7 @@ struct PointingCalibrationTests {
         respond([65, 45, 65, 45, 0, 0, 0, 0, 0, 0, 1, 0x72, 1], at: 0.41)
         #expect(glove.lastHeading == nil)
         #expect(glove.magneticPointing(now: epoch.addingTimeInterval(0.42)) == nil)
-        #expect(throws: GloveTransportError.self) { try glove.send(.vehicleArrived, now: epoch.addingTimeInterval(0.42)) }
+        #expect(throws: GloveTransportError.self) { try glove.send(.confirm(durationMs: 180, intensity: 160), now: epoch.addingTimeInterval(0.42)) }
         glove.tick(now: epoch.addingTimeInterval(0.42))
         #expect(packets.last?[7] == 0) // Hand-down stops a running automatic pulse.
         respond([0], at: 0.425)
@@ -428,5 +429,35 @@ struct PointingCalibrationTests {
         let oldID = glove.calibrationID
         glove.disconnect()
         #expect(glove.pointingCalibration == nil && glove.orientation == nil && glove.calibrationID != oldID)
+    }
+
+    @Test func loweringHandDuringTransitAlertDoesNotStopThePattern() throws {
+        let glove = FirmwareGlove()
+        var packets: [Data] = []
+        glove.write = { packets.append($0) }
+        func respond(_ payload: [UInt8], at seconds: Double) {
+            var header = Array(packets.last!.prefix(7)); header[2] |= 0x80
+            glove.receive(Data(header + payload), now: epoch.addingTimeInterval(seconds))
+        }
+        glove.beginLink(now: epoch)
+        respond([31], at: 0.01); respond([0], at: 0.02)
+        glove.calibrate(try calibration())
+        glove.northCorrection = MagneticNorthCorrection(trueHeading: 5, magneticHeading: 0, accuracy: 2, timestamp: epoch)
+        glove.tick(now: epoch.addingTimeInterval(0.1))
+        respond([0,64,0,0,0,0,0,0,0,0,1,0x72,1], at: 0.11)
+        #expect(glove.lastHeading != nil)
+        try glove.send(.vehicleArrived, now: epoch.addingTimeInterval(0.12))
+        #expect(packets.last?[2] == 3 && packets.last?[7] == 2)
+        respond([0], at: 0.13)
+        let sentBeforeHandDown = packets.count
+        for time in [0.25, 0.4, 0.55, 0.7] {
+            glove.tick(now: epoch.addingTimeInterval(time))
+            #expect(packets.last?[2] == 5)
+            respond([65,45,65,45,0,0,0,0,0,0,1,0x72,1], at: time + 0.01)
+        }
+        #expect(glove.lastHeading == nil)
+        #expect(!packets.dropFirst(sentBeforeHandDown).contains { $0[2] == 3 })
+        try glove.send(.stop, now: epoch.addingTimeInterval(0.72))
+        #expect(packets.last?[2] == 3 && packets.last?[7] == 0)
     }
 }

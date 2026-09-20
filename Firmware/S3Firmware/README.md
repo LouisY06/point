@@ -58,8 +58,8 @@ identified before upload; this project must not be uploaded to the old C6.
   are rejected within a connection.
 - Motor output uses unsigned RTP and the verified sketch's ERM/open-loop assumption.
   Rated-voltage and overdrive-clamp registers are not retuned. A confirmation is
-  limited to 350 ms and intensity 204/255. Vehicle arrival is four 120 ms pulses
-  at 160/255, separated by 100 ms silence (780 ms total).
+  limited to 350 ms and intensity 204/255. Vehicle arrival is three 120 ms pulses
+  at 160/255, separated by 100 ms silence (560 ms total).
 - Overlapping non-STOP cues are rejected instead of extending a running pulse.
   Pulse completion, STOP and disconnect write RTP zero then standby. Driver read/
   write failures or overcurrent/overtemperature disable subsequent motor output
@@ -92,7 +92,7 @@ See [setup steps](../../docs/DEVICE_SETUP.md) and the [wire contract](../../docs
    verification based on a successful bench motor test alone.
 
 Host tests exercise packet bounds, the exact Swift-compatible attitude vector,
-malformed opcodes/lengths, motor deadline, four-pulse timing, overlap rejection,
+malformed opcodes/lengths, motor deadline, three-pulse timing, overlap rejection,
 STOP and invalid time. Both tests run with address/undefined-behavior sanitizers.
 
 ## Remaining limitations

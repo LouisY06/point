@@ -30,7 +30,7 @@ public enum HapticCommand: Equatable {
     /// A finite, low-duty confirmation pulse; firmware must stop it locally after durationMs.
     case confirm(durationMs: UInt16, intensity: UInt8)
     /// Our bus/train is at the platform (or it is time to get off). A recognisably different,
-    /// finite pattern; the firmware chooses the exact motor sequence.
+    /// finite pattern: three short pulses on current S3 firmware, independent of pointing.
     case vehicleArrived
 }
 

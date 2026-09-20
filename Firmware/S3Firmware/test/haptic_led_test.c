@@ -40,11 +40,16 @@ int main(void) {
     assert(led_level==1 && motor_output==0);
     c.kind=2;c.duration_ms=c.intensity=0;
     assert(point_haptics_play(&c,2000000));
+    int flashes = 0;
+    bool was_lit = false;
     for(int ms=0;ms<=800;ms+=5) {
         point_haptics_tick(2000000+ms*1000);
-        bool buzzing=ms<780 && ms%220<120;
+        bool buzzing=ms<560 && ms%220<120;
         assert((led_level==0)==buzzing && (motor_output>0)==buzzing);
+        if (led_level==0 && !was_lit) flashes++;
+        was_lit = led_level==0;
     }
+    assert(flashes==3);
     assert(point_haptics_play(&c,3000000));
     point_haptics_stop(); // Same API used by BLE disconnect, STOP and recalibration.
     assert(led_level==1 && motor_output==0);
