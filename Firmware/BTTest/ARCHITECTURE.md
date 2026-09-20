@@ -6,15 +6,16 @@ This document describes the checked-in **ESP32-C6 ESP-IDF BLE prototype**, not
 the currently wired device. The active hardware baseline is a Seeed Studio
 XIAO ESP32-S3 running `CircuitTest/CircuitTest.ino` with this pinout:
 
-| Peripheral | SDA | SCL | Address |
-|---|---:|---:|---:|
-| MPU6050 | GPIO2 | GPIO1 | `0x68` or `0x69` |
-| DRV2605L | GPIO41 | GPIO42 | `0x5A` |
+| Peripheral | Role | SDA | SCL | Address |
+|---|---|---:|---:|---:|
+| BNO055 | Primary fused IMU | GPIO2 | GPIO1 | `0x28` or `0x29` |
+| MPU6050 | Redundant IMU | GPIO2 | GPIO1 | `0x68` or `0x69` |
+| DRV2605L | Haptic driver | GPIO41 | GPIO42 | `0x5A` |
 
-The two peripherals use separate ESP32-S3 hardware I2C controllers. The
-functional S3 test firmware and PlatformIO handoff are documented in
-[`../README.md`](../README.md). None of the sensor or haptic behavior is yet
-connected to the BLE implementation described below.
+The two IMUs share ESP32-S3 I2C controller 0 and the haptic driver uses
+controller 1. The functional S3 test firmware and PlatformIO handoff are
+documented in [`../README.md`](../README.md). None of the sensor or haptic
+behavior is yet connected to the BLE implementation described below.
 
 The full firmware will use **ESP-IDF on the ESP32-S3**. The Arduino circuit
 sketch is only a functional-verification and debugging aid; it is not the
@@ -32,8 +33,8 @@ XIAO ESP32-C6. Its purpose is to verify that a phone can:
 5. Receive a notification in response.
 
 This is a connection and protocol prototype. It does not include the current
-MPU6050 and DRV2605L drivers, GPS, navigation logic, bonding, or production
-security.
+MPU6050, BNO055, and DRV2605L drivers, GPS, navigation logic, bonding, or
+production security.
 
 ## Software Architecture
 
@@ -228,19 +229,25 @@ linked into the production application.
 The intended runtime ownership is:
 
 ```text
-MPU6050 service (100 Hz) ----> latest attitude/health snapshot
-          |                                |
-          |                                v
-          |                         BLE notification path
-          |
+Primary BNO055 ----+
+                   +----> IMU health/selection ----> attitude snapshot
+Redundant MPU6050 -+              |                         |
+                                  |                         v
+                                  |                  BLE notification path
+                                  |
 BLE command callback ----> bounded command queue ----> haptic service
-                                                       |
-                                                       v
-                                                  DRV2605L
+                                                           |
+                                                           v
+                                                      DRV2605L
 ```
 
-- The IMU service owns MPU6050 I2C access and must preserve its 100 Hz update
-  cadence.
+- The IMU service owns BNO055 and MPU6050 I2C access. The BNO055 is the primary
+  fused attitude source; the MPU6050 is the redundant source. It must preserve
+  the MPU6050's 100 Hz update cadence while independently polling BNO055 fusion.
+- Production redundancy requires freshness checks, error counters, plausibility
+  limits, disagreement thresholds, and an explicit degraded/failover state.
+  The functioning Arduino prototype reads both sensors but does not implement
+  automatic selection or failover.
 - The haptic service owns DRV2605L I2C access and consumes bounded commands.
 - BLE callbacks validate and enqueue data only; they do not access either I2C
   controller or wait for an effect to complete.

@@ -2,9 +2,10 @@
 
 ## Current status
 
-The active hardware target is a **Seeed Studio XIAO ESP32-S3**. The known-good
-hardware bring-up firmware is [`CircuitTest/CircuitTest.ino`](CircuitTest/CircuitTest.ino),
-which is currently functional when built with the Arduino framework.
+The active hardware target is a **Seeed Studio XIAO ESP32-S3**. The complete
+Arduino bring-up sketch in
+[`CircuitTest/CircuitTest.ino`](CircuitTest/CircuitTest.ino) is functioning and
+has verified the BNO055, redundant MPU6050, and DRV2605L together.
 
 The required environment for the full firmware is **ESP-IDF targeting the
 ESP32-S3**, managed through PlatformIO. The Arduino sketch is only a functional
@@ -22,17 +23,21 @@ hardware.
 
 | Path | Role | Status |
 |---|---|---|
-| `CircuitTest/CircuitTest.ino` | ESP32-S3 MPU6050 and DRV2605L bring-up | Arduino verification prototype |
+| `CircuitTest/CircuitTest.ino` | ESP32-S3 primary BNO055, redundant MPU6050, and DRV2605L bring-up | Verified Arduino prototype |
 | `CircuitTest/README.md` | Circuit-test operation and troubleshooting | Current |
 | `BTTest/` | ESP32-C6 NimBLE command/status prototype | Legacy prototype; port required |
 | `BTTest/ARCHITECTURE.md` | BLE architecture and GATT protocol | Protocol reference |
 
 ## Current circuit and pinout
 
-The two peripherals use separate ESP32-S3 hardware I2C controllers.
+The BNO055 is the primary fused IMU and the MPU6050 is the redundant IMU. Both
+share the first ESP32-S3 hardware I2C controller. The haptic driver uses the
+second controller.
 
 | Function | Peripheral pin | XIAO ESP32-S3 GPIO | I2C address | Firmware bus |
 |---|---:|---:|---:|---:|
+| BNO055 data | SDA | GPIO2 | `0x28` or `0x29` | `TwoWire(0)` |
+| BNO055 clock | SCL | GPIO1 | — | `TwoWire(0)` |
 | MPU6050 data | SDA | GPIO2 | `0x68` with AD0 low; `0x69` with AD0 high | `TwoWire(0)` |
 | MPU6050 clock | SCL | GPIO1 | — | `TwoWire(0)` |
 | DRV2605L data | SDA | GPIO41 | `0x5A` | `TwoWire(1)` |
@@ -40,10 +45,10 @@ The two peripherals use separate ESP32-S3 hardware I2C controllers.
 | Logic reference | GND | GND | — | Shared ground required |
 
 The pin numbers above are ESP32-S3 **GPIO numbers**, not arbitrary Arduino `D`
-labels. Both buses currently run at 400 kHz. Ensure each bus has pull-ups to
-3.3 V and that the MPU6050, DRV2605L, motor supply, and ESP32 share a ground.
-Connect the haptic actuator only to the DRV2605L outputs, never directly to an
-ESP32 GPIO.
+labels. The shared IMU bus runs at 100 kHz for conservative BNO055 operation;
+the DRV2605L bus runs at 400 kHz. Ensure each bus has pull-ups to 3.3 V and that
+both IMUs, the DRV2605L, motor supply, and ESP32 share a ground. Connect the
+haptic actuator only to the DRV2605L outputs, never directly to an ESP32 GPIO.
 
 The current sketch assumes an ERM motor (`HAPTIC_MOTOR_IS_LRA = false`) and
 selects effect `47`, "Buzz 1 - 100%." Confirm the actuator type and rated
@@ -54,20 +59,28 @@ voltage before changing DRV2605L rated-voltage or overdrive registers.
 At boot, the sketch:
 
 1. Starts both I2C controllers and scans them.
-2. Detects the MPU6050 at `0x68` or `0x69`.
+2. Detects the MPU6050 at `0x68` or `0x69` and the BNO055 at `0x28` or `0x29`.
 3. Configures the accelerometer for +/-4 g, gyro for +/-500 degrees/second,
    and the low-pass filter for 21 Hz.
 4. Averages 400 gyro samples over roughly two seconds. Keep the device still
    during this calibration.
-5. Samples the MPU6050 at 100 Hz and reports data at 10 Hz.
+5. Samples the MPU6050 at 100 Hz and BNO055 fused attitude at 50 Hz, then
+   reports both at 10 Hz.
 6. Estimates roll and pitch with a complementary filter.
-7. Integrates gyro Z as relative yaw. This value will drift because the
-   MPU6050 has no magnetometer.
-8. Detects the DRV2605L at `0x5A` and triggers a startup haptic effect.
+7. Integrates MPU6050 gyro Z as relative yaw. This value will drift because
+   the MPU6050 has no magnetometer.
+8. Reports BNO055 heading, roll, pitch, and calibration state from its onboard
+   NDOF fusion.
+9. Detects the DRV2605L at `0x5A` and triggers a startup haptic effect.
+
+The prototype reads both IMUs independently and makes their results visible for
+comparison. It does not yet implement automatic sensor voting, fault isolation,
+or failover from the BNO055 to the MPU6050; those belong in the ESP-IDF
+firmware.
 
 Open the Serial Monitor at 115200 baud. Send `h` or `H` to replay the haptic
-effect. A healthy scan begins with devices at `0x68`/`0x69` and `0x5A` on their
-respective buses.
+effect. A healthy scan reports `0x28`/`0x29` and `0x68`/`0x69` on the shared
+IMU bus, plus `0x5A` on the haptic bus.
 
 ## PlatformIO development
 
@@ -104,7 +117,7 @@ The Arduino Adafruit libraries are not production dependencies. Reimplement
 the verified behavior with ESP-IDF components:
 
 1. Create the ESP32-S3/ESP-IDF PlatformIO project without changing the circuit.
-2. Add independent MPU6050 and DRV2605L components using ESP-IDF's I2C driver.
+2. Add BNO055, MPU6050, and DRV2605L components using ESP-IDF's I2C driver.
 3. Preserve the verified pins, addresses, bus separation, sensor ranges, and
    100 Hz sample cadence from `CircuitTest.ino`.
 4. Reproduce the I2C scan, gyro calibration, orientation output, and haptic
@@ -165,8 +178,12 @@ port names such as `/dev/cu.usbmodem...` or `COM5`.
 - Keep hardware access out of BLE callbacks. Validate incoming packets, place
   commands into a bounded queue, and let the owning application task act on
   them.
-- Keep the MPU6050 and DRV2605L on separate I2C controllers unless the hardware
-  is deliberately revised.
+- Keep both IMUs on controller 0 and the DRV2605L on controller 1 unless the
+  hardware is deliberately revised.
+- Treat the BNO055 as the primary attitude source and the MPU6050 as the
+  independent redundant source. A sensor being present on I2C is not enough to
+  declare it healthy; track freshness, read errors, plausible ranges, and
+  disagreement between sensors.
 - Treat the existing complementary filter as bring-up code, not a final
   navigation-grade attitude estimator.
 - Record the exact motor type, rated voltage, and DRV2605L supply before tuning
@@ -184,10 +201,14 @@ port names such as `/dev/cu.usbmodem...` or `COM5`.
    [`BTTest/ARCHITECTURE.md`](BTTest/ARCHITECTURE.md) to the S3 ESP-IDF
    application.
 4. Add bounded queues between BLE, IMU, and haptic modules.
-5. Add sensor-health counters, I2C recovery, a watchdog, and brownout testing.
+5. Add sensor-health counters, BNO055/MPU6050 disagreement monitoring,
+   explicit degraded/failover states, I2C recovery, a watchdog, and brownout
+   testing.
 6. Add GPS and battery monitoring only after the IMU timing remains stable
    while BLE is connected and sending notifications.
 
-The present firmware does not yet provide absolute heading, production BLE
-security, GPS, battery measurement, low-power states, OTA updates, or persistent
-calibration storage.
+The present Arduino prototype exposes BNO055 fused heading for verification,
+but the production firmware does not yet provide a validated attitude pipeline,
+BLE security, GPS, battery measurement, low-power states, OTA updates, or
+persistent calibration storage. Redundant hardware is present, but automatic
+IMU failover is not yet implemented.

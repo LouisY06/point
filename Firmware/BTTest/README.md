@@ -1,7 +1,8 @@
 # BT Test: ESP32-C6 BLE Prototype
 
 > **Repository status:** This is the earlier Seeed Studio XIAO ESP32-C6 BLE
-> prototype. The active circuit now uses an ESP32-S3, MPU6050, and DRV2605L.
+> prototype. The active circuit now uses an ESP32-S3 with a primary BNO055,
+> redundant MPU6050, and DRV2605L.
 > The current hardware baseline and PlatformIO handoff are documented in
 > [`../README.md`](../README.md). This project remains useful as protocol and
 > NimBLE lifecycle reference code, but it has not been ported to the S3.
@@ -50,8 +51,10 @@ firmware environment is explicitly **ESP-IDF on the ESP32-S3**, managed through
 PlatformIO. Arduino remains limited to circuit verification and easy debugging.
 
 The next teammate should create the S3 ESP-IDF project, port this NimBLE module,
-and implement MPU6050 and DRV2605L access as ESP-IDF components. Retain the
+and implement BNO055, MPU6050, and DRV2605L access as ESP-IDF components. The
+BNO055 is the primary attitude source and the MPU6050 is the redundant source;
+automatic fault detection and failover still need to be designed. Retain the
 UUIDs and command/status behavior unless the phone application is updated at
 the same time. Rename the advertised device from `BT Test C6` during the S3
-port. BLE callbacks must enqueue work rather than reading the IMU or triggering
-the haptic driver directly.
+port. BLE callbacks must enqueue work rather than reading either IMU or
+triggering the haptic driver directly.
