@@ -143,6 +143,10 @@ final class AccessibilityAuditTests: XCTestCase {
                 // rows that happen to be on screen at each size, so it calls them clipped or unscaled.
                 if issue.auditType == .dynamicType || issue.auditType == .textClipped,
                    lists.contains(where: { $0.contains(element.frame) }) { return true }
+                // A button in a Form row is hit-testable across the whole row, so the contrast sampler
+                // compares its text with the row background around the drawn capsule, not the capsule.
+                if issue.auditType == .contrast, element.elementType == .button,
+                   lists.contains(where: { $0.contains(element.frame) }) { return true }
             } else if issue.auditType == .elementDetection, overSheet {
                 // Text the audit spotted by eye but could not find an element for: with a sheet up, that is
                 // the dimmed screen behind it showing through the sheet material.
