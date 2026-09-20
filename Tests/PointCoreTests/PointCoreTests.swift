@@ -72,6 +72,14 @@ struct RouteTests {
 }
 
 struct FeedbackTests {
+    private func expectGuidancePulse(_ command: HapticCommand?) {
+        guard case .confirm(let duration, let intensity) = command else {
+            Issue.record("Expected a finite guidance pulse"); return
+        }
+        #expect(duration == 180)
+        #expect((1...204).contains(intensity))
+    }
+
     private func evaluate(_ engine: inout DirectionFeedbackEngine, degrees: Double, seconds: Double,
                           reference: HeadingReference = .trueNorth) -> DirectionFeedback {
         engine.evaluate(target: plan().beacons[0], location: location(),
@@ -122,7 +130,7 @@ struct FeedbackTests {
         #expect(check(gpsAccuracy: 15, at: 0).status == .checking)
         let aligned = check(gpsAccuracy: 15, at: 0.21)
         #expect((aligned.uncertaintyDegrees ?? 0) > 60)
-        #expect(scheduler.command(for: aligned, now: epoch.addingTimeInterval(0.21)) == .confirm(durationMs: 180, intensity: 160))
+        expectGuidancePulse(scheduler.command(for: aligned, now: epoch.addingTimeInterval(0.21)))
         // Crossing inside the GPS uncertainty circle no longer suppresses pointing.
         #expect(check(gpsAccuracy: 25, at: 0.3).shouldConfirm)
         let turnedAway = check(gpsAccuracy: 25, angle: 36, at: 0.4)
@@ -165,7 +173,7 @@ struct FeedbackTests {
         }
         #expect(point.feedback.shouldConfirm)
         #expect((point.feedback.uncertaintyDegrees ?? 0) > 60)
-        #expect(glove.commands.last == .confirm(durationMs: 180, intensity: 160))
+        expectGuidancePulse(glove.commands.last)
         #expect(point.lastQueuedHapticCommand == glove.commands.last)
         #expect(point.lastTransportError == nil)
         // A real turn away stops output, even though north and sensor accuracy remain valid.
@@ -183,13 +191,19 @@ struct FeedbackTests {
         point.updateLocation(location(nearBeacon, seconds: 0.9, accuracy: 40), now: epoch.addingTimeInterval(0.9))
         #expect(point.navigation.locationQuality == .degraded)
         #expect(point.feedback.shouldConfirm)
-        for seconds in stride(from: 1.0, through: 15.0, by: 0.5) {
+        for seconds in stride(from: 1.0, through: 15.0, by: 0.1) {
             let now = epoch.addingTimeInterval(seconds)
             point.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: now, reference: .trueNorth)), now: now)
             #expect(point.feedback.shouldConfirm)
             #expect(point.navigation.beaconIndex == 0)
             #expect(point.navigation.state == .navigating)
         }
+        let strengths = glove.commands.compactMap { command -> UInt8? in
+            guard case .confirm(_, let intensity) = command else { return nil }
+            return intensity
+        }
+        #expect(strengths.count >= 40)
+        #expect((strengths.max() ?? 0) >= 200)
         // The retained fix still expires, stopping a previously active motor.
         point.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: epoch.addingTimeInterval(15.1), reference: .trueNorth)),
                       now: epoch.addingTimeInterval(15.1))
@@ -211,7 +225,7 @@ struct FeedbackTests {
         #expect(scheduler.command(for: evaluate(&engine, degrees: 90, seconds: 0), now: epoch) == nil)
         _ = evaluate(&engine, degrees: 0, seconds: 0.1)
         let aligned = evaluate(&engine, degrees: 0, seconds: 0.5)
-        #expect(scheduler.command(for: aligned, now: epoch.addingTimeInterval(0.5)) == .confirm(durationMs: 180, intensity: 160))
+        expectGuidancePulse(scheduler.command(for: aligned, now: epoch.addingTimeInterval(0.5)))
         #expect(scheduler.command(for: aligned, now: epoch.addingTimeInterval(0.6)) == nil)
         #expect(scheduler.command(for: evaluate(&engine, degrees: 90, seconds: 0.7), now: epoch.addingTimeInterval(0.7)) == .stop)
     }

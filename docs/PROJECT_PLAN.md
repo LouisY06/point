@@ -10,6 +10,8 @@ September 20, build 22: live phone diagnostics confirmed a valid north offset wa
 
 September 20, build 25: outdoor vibration now follows estimated pointing within 25° for 200 ms and stops beyond 35°. This is the default, with no extra mode. Previously the app added heading and GPS bearing uncertainty to the pointing angle, making confirmation impossible for the recorded 17° glove estimate and nearby beacons. Combined uncertainty is now diagnostic only, including when a beacon is inside the GPS uncertainty circle; pointing tolerates GPS gaps up to 15 seconds using the last accepted location, while beacon advancement still requires fixes no more than 5 seconds old. Glove health and the raised-hand gate still apply. Debug snapshots include angle error, uncertainty, active beacon distance/index, queued commands, acknowledgements and transport errors.
 
+September 20, build 26: outdoor guidance now shares the indoor demo's graded pulse generator: 180 ms pulses requested at most every 200 ms, easing toward a maximum of 204/255 when pointing within 10° and fading toward 35°. The outdoor alignment dwell, recent GPS retention, hand elevation and sensor gates remain in place. Actual BLE sends keep the existing duration-plus-50-ms spacing; bus arrival remains three distinct pulses.
+
 Voice update: the live Apple Speech/OpenAI input flow now has Deepgram Flux spoken replies, with native speech fallback. `.env.example` documents Debug-only configuration. Speech stops on recording, cancel, inactivity and interruption; VoiceOver owns announcements when enabled. See [voice setup](VOICE_SETUP.md). City clarification, route confirmation and follow-up corrections are implemented; unrestricted conversation remains out of scope.
 
 Maps update: map display, destination search, and walking directions now use native Apple MapKit. The Google SDK and key requirements have been removed. Typed destination search needs no API credentials. The microphone now records and transcribes through OpenAI in Debug builds; the scripted demo runs only with the `--preview-route` launch argument.
@@ -180,8 +182,8 @@ The algorithm computes the signed difference between the target bearing and glov
 | Enter alignment | Measured angular error at most 25 degrees |
 | Leave alignment | Measured angular error above 35 degrees |
 | Stable alignment dwell | 200 ms |
-| Confirmation pulse | 180 ms; intensity value 160 on the app's UInt8 scale |
-| Minimum interval between pulses | 900 ms |
+| Confirmation pulse | 180 ms; eased intensity up to 204/255, matching the indoor demo |
+| Minimum interval between pulse requests | 200 ms; actual sends wait for pulse duration plus 50 ms |
 | Foreground watchdog expectation | Approximately 10 Hz, plus incoming sensor/location events |
 
 These are prototype glove defaults, not calibrated hardware specifications. The real-glove foreground watchdog now evaluates at 10 Hz; physical stale-sensor behavior still needs board testing. Indoor glove guidance uses a 20 Hz room loop and eased finite motor pulses; phone stand-in controls are removed. The mounted finger must stay within ±30° of level for automatic haptics. Firmware must end every finite pulse locally even if the phone disconnects or suspends.

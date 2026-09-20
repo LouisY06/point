@@ -217,12 +217,13 @@ Request: 11 bytes:
 | 10 | 1 | Intensity 0–204 (kind 1 only; 255 would mean full scale) |
 
 STOP and vehicle-arrived require zero duration/intensity fields.
-Confirmation accepts 1–350 ms; outdoor navigation sends 180 ms at intensity 160,
-at most once per 900 ms after stable alignment. Intensity is a requested scale;
+Confirmation accepts 1–350 ms; outdoor navigation and the indoor demo share eased
+180 ms pulses, capped at intensity 204 and requested no faster than every 200 ms.
+Outdoor guidance begins after its stable alignment dwell. Intensity is a requested scale;
 firmware owns motor-specific calibration. Do not translate it to unverified electrical
 drive settings. Vehicle-arrived: three 120 ms pulses separated by 100 ms silence,
 maximum intensity 160, total 560 ms, finishing locally. No left/right encoding.
-Indoor guidance requests eased 180 ms pulses (full angular target within 10°, zero outside 35°, capped at 204), no faster than 5 Hz. The app also spaces actual sends by pulse duration plus 50 ms so deferred requests cannot overlap the firmware motor timeline.
+Both use full angular target strength within 10° and fade to zero at 35°. The app also spaces actual sends by pulse duration plus 50 ms so deferred requests cannot overlap the firmware motor timeline.
 
 Response: 8 bytes, payload 0 accepted or 1 rejected. GATT write success alone is
 not application acceptance. Send accepted only after the owning task accepts the
