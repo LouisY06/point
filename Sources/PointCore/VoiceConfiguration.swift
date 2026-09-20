@@ -12,6 +12,12 @@ public struct VoiceConfiguration {
     public let speed: Double
     /// Optional; the MBTA API works without a key at 20 requests/min.
     public let mbtaKey: String?
+    /// Deepgram: preferred for both the final transcript (Nova-3 with place-name keyterms) and
+    /// spoken replies (Flux TTS) when set; OpenAI and ElevenLabs remain the fallbacks.
+    public let deepgramKey: String?
+    public let deepgramVoice: String
+    /// Flux TTS delivery, -2 (calm) to 2 (animated).
+    public let deepgramExpressivity: Int
 
     public init(environment: [String: String] = [:], fileContents: String = "") {
         let file = Self.parse(fileContents)
@@ -30,6 +36,9 @@ public struct VoiceConfiguration {
         let requestedSpeed = value("ELEVENLABS_VOICE_SPEED").flatMap(Double.init) ?? 0.95
         speed = requestedSpeed.isFinite ? min(1.2, max(0.7, requestedSpeed)) : 0.95
         mbtaKey = value("MBTA_API_KEY")
+        deepgramKey = value("DEEPGRAM_API_KEY")
+        deepgramVoice = value("DEEPGRAM_VOICE") ?? "flux-hannah-en"
+        deepgramExpressivity = min(2, max(-2, value("DEEPGRAM_EXPRESSIVITY").flatMap(Int.init) ?? 0))
     }
 
     private static func parse(_ contents: String) -> [String: String] {

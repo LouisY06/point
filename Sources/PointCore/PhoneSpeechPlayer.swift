@@ -34,6 +34,7 @@ import Foundation
         self.completion = completion
         fullText = audio.text
         guard player.play() else { stop(); throw ServiceError.invalidResponse }
+        let audio = audio.withEstimatedCues(duration: player.duration)
         captionTask = Task { [weak self] in
             var previous = ""
             while !Task.isCancelled {

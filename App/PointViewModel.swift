@@ -69,8 +69,10 @@ import UIKit
     private lazy var spokenFeedback = SpokenFeedback(player: speechPlayer, onProgress: { [weak self] text in
         self?.displayedReply = text
     }) { [weak self] in
-        guard let configuration = self?.developmentVoiceConfiguration, configuration.elevenLabsKey != nil else { return nil }
-        return ElevenLabsSpeech(configuration: configuration)
+        guard let configuration = self?.developmentVoiceConfiguration else { return nil }
+        if configuration.deepgramKey != nil { return DeepgramSpeech(configuration: configuration) }
+        if configuration.elevenLabsKey != nil { return ElevenLabsSpeech(configuration: configuration) }
+        return nil
     }
 
     // Local development only. Production app should inject authenticated backend implementations
@@ -301,9 +303,14 @@ import UIKit
                 // is the fallback, so voice still works without a key or when the request fails.
                 var text = recording.transcript
                 let configuration = developmentVoiceConfiguration
-                if let key = configuration.openAIKey {
-                    do { text = try await OpenAITranscriber(model: configuration.transcriptionModel,
-                                                           authorization: { "Bearer \(key)" }).transcribe(audio: recording.audio) }
+                // Deepgram first (Nova-3 with Boston place-name keyterms), then OpenAI, then the live Apple text.
+                let transcriber: (any SpeechTranscribing)? = if let key = configuration.deepgramKey {
+                    DeepgramTranscriber(apiKey: key)
+                } else if let key = configuration.openAIKey {
+                    OpenAITranscriber(model: configuration.transcriptionModel, authorization: { "Bearer \(key)" })
+                } else { nil }
+                if let transcriber {
+                    do { text = try await transcriber.transcribe(audio: recording.audio) }
                     catch { if text.isEmpty { throw error } }
                 }
                 guard !Task.isCancelled else { return }
