@@ -19,7 +19,7 @@ struct PhonePointingTests {
                                    enabled: true, rerouteRequired: false, now: now)
         }
         #expect(feedback(origin, accuracy: 40, age: 0).locationIssue == .inaccurate(meters: 40))
-        #expect(feedback(origin, accuracy: 3, age: 6).locationIssue == .stale(seconds: 6))
+        #expect(feedback(origin, accuracy: 3, age: 16).locationIssue == .stale(seconds: 16))
         let nearby = feedback(target.coordinate, accuracy: 3, age: 0)
         #expect(nearby.locationIssue == .nearby(distance: 0, uncertainty: 3))
         #expect(nearby.distanceToBeaconMeters == 0)
@@ -51,9 +51,10 @@ struct PhonePointingTests {
                                    connected: true, enabled: true, rerouteRequired: false, now: time)
         }
         #expect(feedback(at: 0.3).angularErrorDegrees != nil)
-        #expect(feedback(at: 5.1).status == .locationUnavailable)
-        session.updateLocation(fix(accuracy: 3, seconds: 6), now: now.addingTimeInterval(6))
-        #expect(feedback(at: 6).angularErrorDegrees != nil)
+        #expect(feedback(at: 9).angularErrorDegrees != nil)
+        #expect(feedback(at: 15.1).status == .locationUnavailable)
+        session.updateLocation(fix(accuracy: 3, seconds: 16), now: now.addingTimeInterval(16))
+        #expect(feedback(at: 16).angularErrorDegrees != nil)
         #expect(session.beaconIndex == 1) // No arrival is invented by retaining a recent fix.
     }
 
@@ -91,7 +92,7 @@ struct PhonePointingTests {
                                        enabled: true, rerouteRequired: false, now: now)
         let angle = try #require(feedback.angularErrorDegrees)
         #expect(abs(angle - 3) < 0.01)
-        #expect(!feedback.shouldConfirm) // Glove confirmation stays conservative.
+        #expect(!feedback.shouldConfirm) // First sample starts the alignment dwell.
         #expect(PhoneHapticEnvelope.targetIntensity(errorDegrees: feedback.conservativeErrorDegrees!) == 0)
         #expect(PhoneHapticEnvelope.targetIntensity(errorDegrees: angle) > 0.78)
         var envelope = PhoneHapticEnvelope()

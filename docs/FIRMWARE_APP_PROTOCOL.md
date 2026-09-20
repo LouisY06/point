@@ -202,8 +202,9 @@ and [trueHeading](https://developer.apple.com/documentation/corelocation/clheadi
 
 Debug builds write a latest-value snapshot to `Documents/north-reference-diagnostics.json`
 for connected-device troubleshooting. It contains sensor accuracy/age, headings, accepted
-correction, glove status and build number; no coordinates, destinations or credentials.
-(paired magnetic/true headings).
+correction, glove status, alignment error/uncertainty, active beacon distance/index, queued
+haptic command, motor acknowledgement age, transport errors and build number; no coordinates,
+destinations or credentials. A queued command or acknowledgement does not prove physical vibration.
 
 ### HAPTIC — `03` → `83`
 

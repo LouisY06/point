@@ -240,12 +240,14 @@ private struct PointHomeContent: View {
                     if model.journeyPlan != nil { journeyLegs }
                     Divider()
                     if model.journeyStarted {
-                        HStack(spacing: 6) {
-                            Image(systemName: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left").accessibilityHidden(true)
-                            Text(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : model.gloveStatus)
+                        if model.isDemo || model.journeyPlan != nil {
+                            HStack(spacing: 6) {
+                                Image(systemName: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left").accessibilityHidden(true)
+                                Text(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : model.gloveStatus)
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .accessibilityElement(children: .combine)
                         }
-                        .font(.subheadline.weight(.medium))
-                        .accessibilityElement(children: .combine)
                         if !model.isDemo, model.journeyState != .arrived, model.journeyPlan == nil {
                             Button(model.journeyState == .paused ? "Resume guidance" : "Pause guidance") {
                                 if model.journeyState == .paused { model.resumeJourney() }

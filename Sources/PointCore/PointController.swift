@@ -10,6 +10,9 @@ import Foundation
     @Published public private(set) var connection: GloveConnection = .disconnected
     @Published public private(set) var batteryPercent: Int?
     @Published public private(set) var lastTransportError: String?
+    /// Last command accepted by the transport queue; a firmware acknowledgement is separate.
+    public private(set) var lastQueuedHapticCommand: HapticCommand?
+    public private(set) var lastHapticQueuedAt: Date?
 
     private var capabilities: GloveCapabilities?
     private var gloveHeading: HeadingReading?
@@ -38,6 +41,8 @@ import Foundation
         batteryPercent = nil
         lastGestureAt = nil
         lastTransportError = nil
+        lastQueuedHapticCommand = nil
+        lastHapticQueuedAt = nil
         glove.onEvent = { [weak self] event in self?.receive(event) }
         if activate { glove.connect() }
         else { glove.disconnect(); tick() }
@@ -126,7 +131,7 @@ import Foundation
             previousTarget = navigation.beaconIndex
         }
         feedback = engine.evaluate(target: navigation.activeBeacon,
-                                   location: navigation.locationQuality == .usable ? navigation.location : nil,
+                                   location: navigation.locationQuality != .unavailable ? navigation.location : nil,
                                    heading: gloveHeading,
                                    connected: connection == .ready && capabilities?.vibration == true,
                                    enabled: outputEnabled && navigation.state == .navigating,
@@ -151,6 +156,8 @@ import Foundation
         guard connection == .ready else { return }
         do {
             try glove.send(command)
+            lastQueuedHapticCommand = command
+            lastHapticQueuedAt = Date()
             lastTransportError = nil
         } catch {
             lastTransportError = error.localizedDescription
