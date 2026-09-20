@@ -251,9 +251,12 @@ private struct PointHomeContent: View {
                                 .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
                             }
                         } else if model.journeyPlan == nil {
-                        Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : model.gloveStatus,
-                                  systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
-                                .font(.subheadline.weight(.medium))
+                        HStack(spacing: 6) {
+                            Image(systemName: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left").accessibilityHidden(true)
+                            Text(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : model.gloveStatus)
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .accessibilityElement(children: .combine)
                         }
                         if model.isDemo {
                             Toggle("Simulate correct pointing", isOn: Binding(get: { model.pointingAligned }, set: { model.setDemoAlignment($0) }))
