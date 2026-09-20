@@ -243,7 +243,7 @@ import Foundation
                     hardwareCalibrationMessage = "Hardware calibration: \(reason)"
                 } else {
                     hardwareCalibrationInProgress = false
-                    hardwareCalibrationMessage = "Gyro ready. Move the glove gently away from magnets if the compass still needs settling."
+                    hardwareCalibrationMessage = "Orientation ready. Move the glove gently away from magnets if the compass still needs settling."
                 }
             }
             let sample = GloveOrientationSample(quaternion: quaternion,
