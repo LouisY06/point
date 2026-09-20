@@ -11,17 +11,23 @@ public enum DestinationResolver {
         case choose([PlaceCandidate])
     }
 
+    /// An unqualified request ("a coffee shop", "McDonald's") is answered from this radius only. A
+    /// map search can return matches in another state; walking there is never what was meant.
+    public static let nearbyRadiusMeters: Double = 25_000
+
     public static func resolve(request text: String, candidates: [PlaceCandidate],
                                from origin: CLLocationCoordinate2D) -> Decision {
-        guard let first = candidates.first else { return .choose([]) }
-        guard candidates.count > 1 else { return .go(first) }
         let query = VoiceDestination.destinationQuery(from: text)
         func distance(_ place: PlaceCandidate) -> Double { RouteGeometry.distanceMeters(origin, place.coordinate) }
+        let qualified = hasQualifier(query)
+        let candidates = qualified ? candidates : candidates.filter { distance($0) <= nearbyRadiusMeters }
+        guard let first = candidates.first else { return .choose([]) }
+        guard candidates.count > 1 else { return .go(first) }
         let matching = candidates.filter { matches(name: $0.name, query: query) }
         if wantsNearest(text) {
             return .go((matching.isEmpty ? candidates : matching).min { distance($0) < distance($1) }!)
         }
-        if hasQualifier(query) { return .go(first) }
+        if qualified { return .go(first) }
         // Prefer results whose name matches what was asked for; otherwise the closest of whatever came back.
         return .go((matching.isEmpty ? candidates : matching).min { distance($0) < distance($1) }!)
     }

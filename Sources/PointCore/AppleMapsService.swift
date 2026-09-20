@@ -30,7 +30,7 @@ import MapKit
                                   address: item.placemark.title ?? "", coordinate: coordinate, streetAddress: street,
                                   city: item.placemark.postalAddress?.city ?? item.placemark.locality,
                                   cityAliases: [item.placemark.locality, item.placemark.postalAddress?.city, item.placemark.subLocality].compactMap { $0 }, isArea: isArea)
-        }.prefix(10).map { $0 }
+        }.prefix(25).map { $0 } // Apple's order is kept; the resolver picks the closest, which may sit past the first ten.
     }
 
     public func walkingRoute(from origin: CLLocationCoordinate2D,

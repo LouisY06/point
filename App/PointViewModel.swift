@@ -394,7 +394,9 @@ import UIKit
                     return
                 case .destination:
                     guard !intent.query.isEmpty else { ask("Which place would you like to go to?"); return }
-                    query = intent.query
+                    // Belt and braces: a model that leaves "near me" in the query sends MapKit hunting for those words.
+                    let cleaned = VoiceDestination.destinationQuery(from: intent.query)
+                    query = cleaned.isEmpty ? intent.query : cleaned
                 }
             } catch {
                 guard !Task.isCancelled else { return }

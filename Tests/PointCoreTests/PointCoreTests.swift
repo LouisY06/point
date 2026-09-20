@@ -201,6 +201,22 @@ struct DestinationResolverTests {
         #expect(chosen.id == "b")
     }
 
+    @Test func unqualifiedRequestsIgnoreResultsInAnotherState() {
+        let farAway = place("Coffee Shop", "far", north: 400_000) // ~400 km north
+        let nearby = place("Cicada Coffee Bar", "near", north: 1_400)
+        guard case .go(let chosen) = DestinationResolver.resolve(request: "take me to the closest coffee shop", candidates: [farAway, nearby], from: here)
+        else { Issue.record("expected go"); return }
+        #expect(chosen.id == "near")
+        // Only far results: better to ask again than to route across the state.
+        guard case .choose(let none) = DestinationResolver.resolve(request: "a coffee shop", candidates: [farAway], from: here)
+        else { Issue.record("expected choose"); return }
+        #expect(none.isEmpty)
+        // A qualified request may legitimately be far away.
+        guard case .go(let qualified) = DestinationResolver.resolve(request: "the Coffee Shop in Portland", candidates: [farAway], from: here)
+        else { Issue.record("expected go"); return }
+        #expect(qualified.id == "far")
+    }
+
     @Test func noResultsStillAskTheUser() {
         guard case .choose(let empty) = DestinationResolver.resolve(request: "x", candidates: [], from: here) else { Issue.record("expected choose"); return }
         #expect(empty.isEmpty)
