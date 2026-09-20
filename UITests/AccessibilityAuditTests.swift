@@ -88,9 +88,20 @@ final class AccessibilityAuditTests: XCTestCase {
         launch("--demo-mode", "--preview-pocket-ui")
         XCTAssertTrue(app.staticTexts["Demo layout preview"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Pause"].exists)
-        XCTAssertTrue(app.buttons["Next beacon"].exists)
+        XCTAssertTrue(app.buttons["End pointing test"].exists)
+        XCTAssertFalse(app.buttons["Next beacon"].exists)
+        XCTAssertTrue(app.staticTexts["Stay in the same spot"].exists)
         assertEveryControlIsLabeled()
         try audit("pocket demo layout preview")
+    }
+
+    func testSingleBeaconPlacementStopsAfterOne() throws {
+        launch("--demo-mode", "--preview-indoor-ui")
+        XCTAssertTrue(app.buttons["Start pointing test"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Place 2"].exists)
+        XCTAssertFalse(app.buttons["Next beacon"].exists)
+        assertEveryControlIsLabeled()
+        try audit("single beacon placement")
     }
 
     func testPocketGuardHidesUnderlyingControls() throws {

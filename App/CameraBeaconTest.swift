@@ -24,6 +24,15 @@ import SwiftUI
     private var lastLogWrite = -Double.infinity
     private var trackingContinuity = RoomTrackingContinuity()
     private var sessionRunning = false
+    @Published var singleBeaconDemo = true
+    var maximumBeacons: Int { singleBeaconDemo ? 1 : 4 }
+    @Published var muteHaptics = false {
+        didSet {
+            if muteHaptics { silence() }
+            logEvent(muteHaptics ? "Motor muted for drift check" : "Motor enabled")
+        }
+    }
+    private var fixedPocketPosition: SIMD3<Float>?
     @Published var pocketDemo = true
     @Published var pocketScanAllBeacons = false
     @Published var stepLength = 0.65
@@ -86,10 +95,10 @@ import SwiftUI
             trackingReady = true
             placementReady = true
             roomAligned = true
-            beaconCount = 2
+            beaconCount = maximumBeacons
             message = "Place the next beacon, or start your route."
             if ProcessInfo.processInfo.arguments.contains("--preview-pocket-ui") {
-                pocketActive = true; pocketSteps = 6; testing = true; hasStarted = true
+                pocketActive = true; pocketSteps = 0; testing = true; hasStarted = true
                 distance = 1.8
                 message = "Layout preview · No motion or glove connected."
                 if ProcessInfo.processInfo.arguments.contains("--preview-pocket-guard") { touchProtected = true }
@@ -153,7 +162,7 @@ import SwiftUI
     }
 
     func placeBeacon() {
-        guard !hasStarted, !finished, anchors.count < 4, trackingReady, let view, let frame = view.session.currentFrame else { return }
+        guard !hasStarted, !finished, anchors.count < maximumBeacons, trackingReady, let view, let frame = view.session.currentFrame else { return }
         // Place at the exact transform shown by the floor cursor, never a second offset raycast.
         let age = placementTimestamp.map { ProcessInfo.processInfo.systemUptime - $0 } ?? .infinity
         guard placementReady, let transform = placementTransform, (0...0.3).contains(age),
@@ -187,7 +196,7 @@ import SwiftUI
         markers[anchor.identifier] = marker
         beaconCount = anchors.count
         logEvent("Placed beacon \(beaconCount)")
-        message = "\(beaconCount) of 4 beacons placed."
+        message = singleBeaconDemo ? "Beacon placed. Stay in this spot to test pointing." : "\(beaconCount) of 4 beacons placed."
     }
 
     private func hidePlacementCursor() {
@@ -198,9 +207,9 @@ import SwiftUI
     }
 
     private func updatePlacementCursor(_ frame: ARFrame) {
-        guard let view, beaconCount < 4 else {
+        guard let view, beaconCount < maximumBeacons else {
             hidePlacementCursor()
-            message = "Four beacons placed. Start when you’re ready."
+            message = singleBeaconDemo ? "Beacon placed. Stay in this spot to test pointing." : "Four beacons placed. Start when you’re ready."
             return
         }
         let planes = frame.anchors.compactMap { $0 as? ARPlaneAnchor }.filter { $0.alignment == .horizontal }
@@ -322,7 +331,7 @@ import SwiftUI
             alignmentMessage = "Direction reference changed. Place the beacons again."; return
         }
         if pocketActive {
-            guard pocketMotion.fresh else { alignmentMessage = pocketMotion.failure ?? "Motion interrupted. Place the route again."; return }
+            guard fixedPocketPosition != nil || pocketMotion.fresh else { alignmentMessage = pocketMotion.failure ?? "Motion interrupted. Place the route again."; return }
         } else if pocketDemo {
             guard beginPocketTest() else { return }
         }
@@ -335,7 +344,8 @@ import SwiftUI
         arrivalSince = nil
         if previousIdleTimerSetting == nil { previousIdleTimerSetting = UIApplication.shared.isIdleTimerDisabled }
         UIApplication.shared.isIdleTimerDisabled = true
-        message = pocketActive ? "Face beacon 1. Stand still and pocket your phone during the countdown."
+        message = fixedPocketPosition != nil ? "Stay in this spot. Turn and point with your glove."
+            : pocketActive ? "Face beacon 1. Stand still and pocket your phone during the countdown."
             : "Point toward beacon \(activeIndex + 1). Keep the camera uncovered."
     }
 
@@ -358,6 +368,16 @@ import SwiftUI
             alignmentMessage = "Stand at least half a metre from beacon 1 before starting."; return false
         }
         pocketTargets = targets
+        if singleBeaconDemo {
+            // Keep the placement coordinate fixed; phone pocketing never moves the target bearing.
+            // This is a pointing demonstration, with no walking or arrival estimate.
+            fixedPocketPosition = SIMD3(position.x, 0, position.z)
+            pocketActive = true; pocketPreparing = false; pocketCountdown = 0; pocketSteps = 0
+            touchProtected = true
+            startPocketBackground()
+            logEvent("Single beacon started; fixed standing position; no step or phone gyro integration")
+            return true
+        }
         pocketMotion.onReady = { [weak self] in
             guard let self, self.pocketActive else { return }
             self.pocketPreparing = false
@@ -375,15 +395,18 @@ import SwiftUI
         pocketActive = true; pocketPreparing = true; pocketCountdown = 8; pocketSteps = 0
         touchProtected = true
         estimatedArrival = EstimatedBeaconArrival()
+        startPocketBackground()
+        return true
+    }
+
+    private func startPocketBackground() {
         backgroundActivity.start(total: anchors.count)
         lockScreenReady = backgroundActivity.running
         onBackgroundModeChange?(lockScreenReady)
         if let failure = backgroundActivity.failure { logEvent(failure) }
-        // Snapshot the shared room positions, then release the camera completely.
         view?.session.pause()
         sessionRunning = false
         trackingReady = true
-        return true
     }
 
     func finishPocketTest() {
@@ -457,6 +480,8 @@ import SwiftUI
         lastSpokenProblem = nil
         pocketActive = false; pocketPreparing = false; pocketSteps = 0
         pocketTargets = []
+        fixedPocketPosition = nil
+        muteHaptics = false
         roomAlignment = nil; roomAligned = false; aligningRoom = false
         alignmentSamples = []; alignmentStarted = nil
         alignmentMessage = nil
@@ -496,7 +521,9 @@ import SwiftUI
         }
         let position: SIMD3<Float>
         let target: SIMD3<Float>
-        if pocketActive, let estimate = pocketMotion.estimate, pocketMotion.fresh, let first = pocketTargets.first {
+        if pocketActive, let fixedPocketPosition, let first = pocketTargets.first {
+            position = fixedPocketPosition; target = first
+        } else if pocketActive, let estimate = pocketMotion.estimate, pocketMotion.fresh, let first = pocketTargets.first {
             position = SIMD3(Float(estimate.x), 0, Float(estimate.z)); target = first
         } else if !pocketActive, let frame = view?.session.currentFrame, trackingReady, let first = anchors.first,
                   let located = frame.anchors.first(where: { $0.identifier == first.identifier }) {
@@ -597,15 +624,17 @@ import SwiftUI
         guard uptime - lastLogSample >= 0.5 else { return }
         lastLogSample = uptime
         let now = Date()
-        var lines = ["Mode: \(relaxedDemo ? "Relative IMU demo" : "Magnetic guidance")",
+        var lines = ["Mode: \(relaxedDemo ? "Relative fused glove heading" : "Magnetic guidance")",
                      "Camera: \(trackingDescription(frame))",
                      "Placement: \(placementReady ? "Ready" : "Paused") · Room: \(roomAligned ? "Aligned" : aligningRoom ? "Aligning" : "Needs alignment")"]
         if pocketActive {
             lines.append("App state: \(UIApplication.shared.applicationState.rawValue) · Live Activity: \(backgroundActivity.running)")
             lines.append("Glove relative reference: \(glove?.relativeCalibrationID.uuidString ?? "none") · Compass adjustments: \(glove?.relativeReference.adjustments ?? 0)")
             lines.append(String(format: "Relative yaw correction: %.1f°", glove?.relativeReference.offset ?? 0))
-            lines.append("Position source: EXPERIMENTAL steps + phone gyro; camera OFF")
-            lines.append("Targets: \(pocketScanAllBeacons ? "Any beacon" : "Automatic sequence") · Selected beacon: \(activeIndex + 1)")
+            lines.append(fixedPocketPosition != nil ? "Position source: FIXED standing position; camera OFF; no walking estimate"
+                         : "Position source: EXPERIMENTAL steps + phone gyro; camera OFF")
+            lines.append("Motor muted: \(muteHaptics)")
+            lines.append("Targets: \(fixedPocketPosition != nil ? "Single beacon; no arrival tracking" : pocketScanAllBeacons ? "Any beacon" : "Automatic sequence") · Selected beacon: \(activeIndex + 1)")
             lines.append("Pocket countdown: \(pocketCountdown) · Steps: \(pocketSteps)")
             if let estimate = pocketMotion.estimate {
                 lines.append(String(format: "Estimated x/z: %.2f / %.2f m · Heading: %.1f° · Travel: %.2f m · Step length: %.2f m", estimate.x, estimate.z, estimate.heading, estimate.travelled, estimate.stepLength))
@@ -657,7 +686,7 @@ import SwiftUI
             if pocketActive {
                 backgroundActivity.update(beacon: min(activeIndex + 1, beaconCount), total: beaconCount,
                     steps: pocketSteps, status: finished ? "Route complete" : !testing ? "Paused · Open Point" : pocketPreparing ? "Pocket phone · Stay still" : message,
-                    distance: distance)
+                    distance: distance, stationary: fixedPocketPosition != nil)
             }
         }
         guard UIApplication.shared.applicationState == .active || (pocketActive && backgroundActivity.running) else { silence(); return }
@@ -717,6 +746,13 @@ import SwiftUI
     }
 
     private func tickPocket() {
+        if let fixedPocketPosition {
+            if roomCalibrationID != currentGloveReferenceID { silence(); gloveReferenceChanged(); return }
+            trackingReady = true
+            guard testing, let target = pocketTargets.first else { return }
+            updateGuidance(position: fixedPocketPosition, targetPosition: target, estimated: false)
+            return
+        }
         pocketMotion.checkAvailability()
         pocketCountdown = pocketMotion.countdown
         pocketSteps = pocketMotion.estimate?.steps ?? 0
@@ -770,7 +806,7 @@ import SwiftUI
             advanceBeacon()
             return
         }
-        if !estimated, horizontalDistance <= 0.35 {
+        if !estimated, fixedPocketPosition == nil, horizontalDistance <= 0.35 {
             intensity = 0
             if let command = pulses.stop() { try? glove?.send(command) }
             if arrivalSince == nil { arrivalSince = now }
@@ -795,6 +831,12 @@ import SwiftUI
                                         targetZ: Double(targetPosition.z - position.z), magneticHeading: heading.degrees)
         errorDegrees = error
         guard let error else { silence(); return }
+        if muteHaptics {
+            if let command = pulses.stop() { try? glove?.send(command) }
+            intensity = 0
+            message = "Motor muted · Pointing still tracked."
+            return
+        }
         if let command = pulses.update(error: error, now: now) {
             do {
                 if relaxedDemo { try glove?.sendRelativeDemo(command) }
@@ -803,7 +845,8 @@ import SwiftUI
             catch { silence(); message = "Glove motor busy or disconnected. Pause and try again."; return }
         }
         intensity = pulses.intensity
-        message = estimated && pocketScanAllBeacons ? "Point at any beacon · Position is approximate."
+        message = fixedPocketPosition != nil ? "Stay in this spot. Stronger pulses mean better alignment."
+            : estimated && pocketScanAllBeacons ? "Point at any beacon · Position is approximate."
             : "Point with your glove. Stronger pulses mean better alignment."
 
     }
@@ -947,9 +990,10 @@ struct CameraBeaconTestView: View {
                 if model.pocketActive {
                     Color.black
                     VStack(spacing: 20) {
-                        Image(systemName: "figure.walk").font(.system(size: 52)).foregroundStyle(PointTheme.action).accessibilityHidden(true)
-                        Text(model.pocketPreparing ? "Pocket your phone" : "Pocket test").font(.title2.weight(.semibold))
-                        Text(model.pocketPreparing ? (model.pocketCountdown > 0 ? "\(model.pocketCountdown)" : "Hold still…")
+                        Image(systemName: model.singleBeaconDemo ? "hand.point.up.fill" : "figure.walk").font(.system(size: 52)).foregroundStyle(PointTheme.action)
+                            .accessibilityLabel(model.singleBeaconDemo ? "Point with your glove" : "Walking test")
+                        Text(model.singleBeaconDemo ? "Pointing test" : model.pocketPreparing ? "Pocket your phone" : "Pocket test").font(.title2.weight(.semibold))
+                        Text(model.singleBeaconDemo ? "Stay in the same spot" : model.pocketPreparing ? (model.pocketCountdown > 0 ? "\(model.pocketCountdown)" : "Hold still…")
                              : "\(model.pocketSteps) steps estimated").font(.title3.monospacedDigit()).fixedSize(horizontal: false, vertical: true)
                         Text(model.pocketPreparing ? "Face beacon 1 and stay in place. Wait for ‘ready’."
                              : model.lockScreenReady ? "Camera off · Lock-screen test enabled."
@@ -972,7 +1016,8 @@ struct CameraBeaconTestView: View {
                     VStack(spacing: 18) {
                         Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(PointTheme.action).accessibilityHidden(true)
                         Text("Pocket touch guard").font(.title2.weight(.semibold))
-                        Text(model.pocketPreparing ? "Face beacon 1 · Stay still · \(model.pocketCountdown)"
+                        Text(model.singleBeaconDemo ? "Stay in the same spot · Turn and point"
+                             : model.pocketPreparing ? "Face beacon 1 · Stay still · \(model.pocketCountdown)"
                              : model.lockScreenReady ? "You can lock the screen." : "Keep Point open.").foregroundStyle(.secondary)
                         Text("Hold here for 2 seconds to show controls.").font(.footnote).foregroundStyle(.secondary)
                     }.padding(24).multilineTextAlignment(.center)
@@ -997,7 +1042,7 @@ struct CameraBeaconTestView: View {
             await model.requestCamera()
             guard !Task.isCancelled else { return }
             onInstruction(model.cameraAllowed
-                          ? "Point your glove toward the first marker while placing it. Add up to four beacons. For the pocket test, face beacon 1 before starting, then pocket your phone and stand still until ready."
+                          ? "Point your glove level toward the marker while placing it. Start the test, pocket your phone, and stay in the same spot while turning and pointing."
                           : model.message)
         }
         .onDisappear { connection.onDemoReading = nil; model.close() }
@@ -1057,7 +1102,7 @@ struct CameraBeaconTestView: View {
                     Spacer()
                     Button { model.pauseTest() } label: { Text("Pause").frame(minHeight: 44) }
                 }
-                if let distance = model.distance {
+                if !model.singleBeaconDemo, let distance = model.distance {
                     Text("\(model.pocketActive ? "≈ " : "")\(distance, specifier: "%.1f") m").monospacedDigit()
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityLabel(Text("\(model.pocketActive ? "Approximately " : "")\(distance, specifier: "%.1f") meters away"))
@@ -1065,8 +1110,8 @@ struct CameraBeaconTestView: View {
                 Text(model.pocketActive ? model.message : model.trackingReady ? "Keep the camera uncovered while walking." : model.message)
                     .font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.pocketActive, !model.pocketPreparing {
-                    if model.pocketScanAllBeacons {
-                        Button("End pocket test") { model.finishPocketTest() }.frame(minHeight: 44)
+                    if model.singleBeaconDemo || model.pocketScanAllBeacons {
+                        Button(model.singleBeaconDemo ? "End pointing test" : "End pocket test") { model.finishPocketTest() }.frame(minHeight: 44)
                     } else {
                         Button(model.activeIndex + 1 == model.beaconCount ? "Finish test" : "Next beacon") { model.nextPocketBeacon() }
                             .frame(minHeight: 44)
@@ -1081,7 +1126,7 @@ struct CameraBeaconTestView: View {
             } else {
                 Text(model.alignmentMessage ?? (model.beaconCount == 0
                      ? "Point your glove toward the marker, then place."
-                     : "\(model.beaconCount) of 4 placed"))
+                     : model.singleBeaconDemo ? "Beacon placed · Stay in this spot" : "\(model.beaconCount) of 4 placed"))
                     .font(.subheadline).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if model.needsGloveReference {
@@ -1110,13 +1155,13 @@ struct CameraBeaconTestView: View {
     }
 
     @ViewBuilder private var placementButtons: some View {
-        if model.beaconCount < 4 {
+        if model.beaconCount < model.maximumBeacons {
             primaryButton(model.aligningRoom ? "Placing…" : model.placementReady ? "Place \(model.beaconCount + 1)" : "Aim camera down") {
                 model.placeBeacon()
             }.disabled(!model.placementReady || model.aligningRoom)
         }
         if model.beaconCount > 0 {
-            primaryButton(model.pocketDemo ? "Start pocket test" : "Start") { startGuidance() }.disabled(model.aligningRoom)
+            primaryButton(model.singleBeaconDemo ? "Start pointing test" : model.pocketDemo ? "Start pocket test" : "Start") { startGuidance() }.disabled(model.aligningRoom)
         }
     }
 
@@ -1124,8 +1169,9 @@ struct CameraBeaconTestView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
-                    Toggle("Experimental pocket mode", isOn: $model.pocketDemo).disabled(model.hasStarted)
-                    if model.pocketDemo {
+                    Toggle("Single beacon pointing test", isOn: $model.singleBeaconDemo).disabled(model.beaconCount > 0)
+                    Toggle("Camera off after placement", isOn: $model.pocketDemo).disabled(model.hasStarted)
+                    if model.pocketDemo, !model.singleBeaconDemo {
                         Toggle("Point at any beacon", isOn: $model.pocketScanAllBeacons).disabled(model.hasStarted)
                         Stepper("Step length: \(model.stepLength, specifier: "%.2f") m", value: $model.stepLength, in: 0.25...1.2, step: 0.05)
                             .disabled(model.hasStarted)
@@ -1134,9 +1180,11 @@ struct CameraBeaconTestView: View {
                     if model.beaconCount == 0 {
                         Stepper("Phone height: \(model.phoneHeight, specifier: "%.1f") m", value: $model.phoneHeight, in: 0.5...1.8, step: 0.1)
                     }
-                    helpSection("Place and walk", "Point your glove level toward the first marker as you tap Place. That placement captures the shared direction reference. Add up to four beacons in visit order, then tap Start.")
+                    helpSection("Single beacon", "Place one beacon while pointing your glove level toward it. Stay in that spot, start the test, and pocket your phone. You can turn and point, but this test does not track walking or arrival. The camera turns off and phone motion cannot shift the target. Touch guard blocks accidental taps; hold for two seconds to show controls.")
+                    helpSection("Drift check", "Glove heading can still drift. In Orientation logs, mute the motor and hold the glove fixed on a nonmetal surface. Compare finger bearing and target error with the motor muted and enabled. This helps separate sensor drift from motor interference. Moving the sensor on the glove requires repeating pointing setup.")
+                    helpSection("Experimental walking mode", "Turn off Single beacon pointing test before placing anything. Point your glove level toward the first marker as you tap Place. That placement captures the shared direction reference. Add up to four beacons in visit order, then tap Start.")
                     helpSection("Pocket test", "Face beacon 1 before Start. Stay in place while putting the unlocked phone in a snug pocket. After the countdown, hold still until you hear ‘ready’. Walk forward and turn with your body; avoid sidestepping or walking backward. Keep the phone fixed in the pocket. Its accelerometer counts steps; its gyro estimates turns. The glove controls pointing. Position is approximate and drifts. Sequential guidance is the default: after an estimated arrival, a spoken cue directs you to the next beacon. Arrival uses the approximate position, so it may trigger early or late. Enable ‘Point at any beacon’ for free pointing instead. Touch guard blocks accidental taps; hold for two seconds to show controls. A Live Activity and background Bluetooth support the locked-screen test. If motion readings stop, vibration pauses.")
-                    helpSection("Camera mode", "Turn pocket mode off to use camera position tracking instead. Keep the lens uncovered while walking. Locking ends camera mode. Pocket mode preserves its session with an active Live Activity. Force-quitting ends guidance.")
+                    helpSection("Camera mode", "Turn Camera off after placement off to use camera position tracking instead. Keep the lens uncovered while walking. Locking ends camera mode. Pocket mode preserves its session with an active Live Activity. Force-quitting ends guidance.")
                     helpSection("Relaxed demo", "Uses an approximate floor and relative glove direction without waiting for magnetic north. If direction drifts, clear the beacons and place them again. Lowering your hand stops vibration.")
                     if model.supported, model.cameraAllowed {
                         VStack(alignment: .leading, spacing: 12) {
@@ -1171,6 +1219,7 @@ struct CameraBeaconTestView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     Text("Live orientation").font(.headline)
+                    Toggle("Mute motor for drift check", isOn: $model.muteHaptics)
                     Text(model.orientationSummary)
                         .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1196,7 +1245,8 @@ struct CameraBeaconTestView: View {
     private func startGuidance() {
         model.startTest()
         onInstruction(model.testing
-                      ? model.pocketPreparing ? "Face beacon one. Stay still, pocket your phone, and wait for ready."
+                      ? model.singleBeaconDemo && model.pocketActive ? "Pointing test ready. Pocket your phone and stay in the same spot. Turn and point with your glove."
+                          : model.pocketPreparing ? "Face beacon one. Stay still, pocket your phone, and wait for ready."
                           : "Point toward beacon \(model.activeIndex + 1). Use your glove to feel the direction."
                       : model.alignmentMessage ?? model.message)
     }

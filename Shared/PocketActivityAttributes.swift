@@ -8,6 +8,7 @@ struct PocketActivityAttributes: ActivityAttributes {
         var steps: Int
         var status: String
         var distance: Double?
+        var stationary: Bool? = nil
     }
     var sessionID: UUID
 }

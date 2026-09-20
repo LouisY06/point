@@ -15,7 +15,7 @@ struct PocketActivityWidget: Widget {
                     Text("Point · Beacon \(context.state.beacon) of \(context.state.total)").font(.headline)
                     Text(context.isStale ? "Tracking update delayed · Open Point" : context.state.status)
                         .font(.subheadline)
-                    Text("\(context.state.steps) steps · Estimated position").font(.caption).foregroundStyle(.secondary)
+                    Text(context.state.stationary == true ? "Pointing test · Stay in the same spot" : "\(context.state.steps) steps · Estimated position").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }.padding(18)

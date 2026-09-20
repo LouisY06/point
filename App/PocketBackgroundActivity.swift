@@ -35,13 +35,13 @@ import PointCore
         } catch { failure = "Live Activity could not start: \(error.localizedDescription)" }
     }
 
-    func update(beacon: Int, total: Int, steps: Int, status: String, distance: Double?) {
+    func update(beacon: Int, total: Int, steps: Int, status: String, distance: Double?, stationary: Bool = false) {
         guard let activity else { return }
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastUpdate >= 2 || status != lastStatus else { return }
         lastUpdate = now; lastStatus = status
         let state = PocketActivityAttributes.ContentState(beacon: beacon, total: total, steps: steps,
-                                                          status: status, distance: distance)
+                                                          status: status, distance: distance, stationary: stationary)
         Task { await activity.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(10))) }
     }
 
