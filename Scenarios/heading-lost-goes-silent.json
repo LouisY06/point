@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "id": "heading-lost-goes-silent",
+  "title": "Losing the glove heading silences guidance until it is restored",
+  "tags": ["guidance", "safety", "glove"],
+  "seed": 11,
+  "tickHz": 20,
+  "maxSeconds": 30,
+  "route": {
+    "kind": "generated",
+    "destinationName": "Kendall Square",
+    "origin": [42.36207, -71.08636],
+    "legs": [{ "bearing": 0, "meters": 120 }]
+  },
+  "walker": {
+    "speedMps": 0,
+    "gps": { "accuracyMeters": 4, "noiseMeters": 1.0, "updateHz": 1 }
+  },
+  "arm": {
+    "accuracyDegrees": 2,
+    "jitterDegrees": 0.5,
+    "profile": [{ "at": 0, "track": { "errorDegrees": 0 } }]
+  },
+  "timeline": [
+    { "at": 10, "action": "headingUnavailable" },
+    { "at": 20, "action": "headingRestored" }
+  ],
+  "expect": [
+    { "eventOrder": ["nav.start", "haptic.confirm", "link.headingUnavailable", "haptic.stop", "link.headingRestored", "haptic.confirm"] },
+    { "silentBetween": { "from": "link.headingUnavailable", "to": "link.headingRestored" } },
+    { "confirmPulses": { "min": 8, "max": 40 } },
+    { "noConfirmBefore": { "alignedWithinDegrees": 25 } },
+    { "endState": "navigating" }
+  ]
+}
