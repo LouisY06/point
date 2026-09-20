@@ -19,11 +19,12 @@ public struct FirmwareSensorHealth: Equatable {
         guard source == .bno055, flags & 8 == 0 else {
             return "Backup motion sensor active · Compass guidance paused"
         }
-        // CALIB_STAT's system score describes fused orientation calibration;
-        // individual gyro offset calibration can be lower while system is 3.
-        // Accept that fully calibrated fusion result without demanding a new pose setup.
-        // Bosch BNO055 datasheet rev 1.8, section 4.3.54.
-        guard gyro == 3 || system == 3 else {
+        // NDOF system > 0 means fusion has acquired its absolute reference; the
+        // individual gyro offset may still be settling. Use that estimated
+        // orientation without requiring full calibration. Stable pose capture,
+        // compass readiness and sample freshness remain separate checks.
+        // https://learn.adafruit.com/adafruit-bno055-absolute-orientation-sensor/device-calibration
+        guard gyro == 3 || system > 0 else {
             return "Hold the glove still for a few seconds to settle its gyro"
         }
         return nil

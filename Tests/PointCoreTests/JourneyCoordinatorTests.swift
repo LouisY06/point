@@ -86,8 +86,10 @@ import Testing
         #expect(controller.navigation.state == .navigating)
         #expect(controller.navigation.activeBeacon?.kind == .boardStop)
 
-        // 30 m from the station entrance is "reached": the 8 m/8 m session rule never fires underground.
-        coordinator.updateLocation(fix(FakeTransit.point(8, 0.0003), seconds: 5), now: epoch.addingTimeInterval(5))
+        // As on a standalone walk, two distinct nearby fixes confirm arrival.
+        coordinator.updateLocation(fix(kendall.coordinate, seconds: 5), now: epoch.addingTimeInterval(5))
+        #expect(coordinator.phase == .walking(leg: 0))
+        coordinator.updateLocation(fix(kendall.coordinate, seconds: 6), now: epoch.addingTimeInterval(6))
         #expect(coordinator.phase == .waitingAtStop(leg: 1))
         #expect(controller.navigation.state == .idle && controller.navigation.activeBeacon == nil) // No beacons while waiting.
         #expect(events.contains(.reachedStop(plan.rides[0])))
@@ -145,6 +147,134 @@ import Testing
         #expect(kendall.id == "place-knncl")
         coordinator.stop()
         #expect(coordinator.phase == .idle && coordinator.plan == nil && controller.navigation.state == .idle)
+    }
+
+    func pointingPlan(bus: Bool = false) -> JourneyPlan {
+        let pattern = bus ? FakeTransit.bus1 : FakeTransit.redSouth
+        let route = TransitRoute(id: pattern.routeID, name: bus ? "Route 1" : "Red Line", colorHex: "DA291C", type: bus ? 3 : 1)
+        let ride = TransitPlanner.rideLeg(pattern, board: 1, alight: 2, routeInfo: [route.id: route], patterns: [pattern])
+        let origin = approach(ride.board.coordinate, meters: 100)
+        let walk = TransitPlanner.stubWalk(from: origin, to: ride.board.coordinate, name: ride.board.name)
+            .relabelingFinalBeacon(kind: .boardStop, instruction: "Board here")
+        let destination = approach(ride.alight.coordinate, meters: -100)
+        let finalWalk = TransitPlanner.stubWalk(from: ride.alight.coordinate, to: destination, name: "Destination")
+        return JourneyPlan(destinationName: "Destination", legs: [.walk(walk), .ride(ride), .walk(finalWalk)], summary: "")
+    }
+
+    func approach(_ stop: CLLocationCoordinate2D, meters: Double) -> CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: stop.latitude - meters / 111_195, longitude: stop.longitude)
+    }
+
+    @Test(arguments: [false, true]) func walkToTransitStopMatchesStandaloneHaptics(bus: Bool) throws {
+        let plan = pointingPlan(bus: bus)
+        guard case .walk(let walk) = plan.legs[0] else { Issue.record("Missing approach"); return }
+        let glove = SimulatedGlove(), walkingGlove = SimulatedGlove()
+        let controller = PointController(glove: glove), walking = PointController(glove: walkingGlove)
+        glove.connect(); walkingGlove.connect()
+        let coordinator = JourneyCoordinator(controller: controller, transit: FakeTransit())
+        defer { coordinator.stop() }
+        try coordinator.start(plan, now: epoch)
+        try walking.start(walk, now: epoch)
+        let transitStart = glove.commands.count, walkingStart = walkingGlove.commands.count
+
+        for (index, meters) in [100.0, 30, 12].enumerated() {
+            let seconds = Double(index) * 2
+            let location = fix(approach(plan.rides[0].board.coordinate, meters: meters), seconds: seconds, accuracy: 15)
+            coordinator.updateLocation(location, now: epoch.addingTimeInterval(seconds))
+            walking.updateLocation(location, now: epoch.addingTimeInterval(seconds))
+            for step in 0...20 {
+                let now = epoch.addingTimeInterval(seconds + Double(step) / 10)
+                let heading = HeadingReading(degrees: step < 5 ? 20 : 0, accuracyDegrees: 17.432,
+                                             timestamp: now, reference: .trueNorth)
+                controller.receive(.heading(heading), now: now)
+                walking.receive(.heading(heading), now: now)
+            }
+            #expect(coordinator.phase == .walking(leg: 0))
+            #expect(controller.feedback.shouldConfirm)
+            guard case .confirm(let duration, let intensity) = glove.commands.last else {
+                Issue.record("Walking toward a transit stop must reach the motor queue"); return
+            }
+            #expect(duration == 180 && intensity >= 200)
+        }
+        #expect(Array(glove.commands.dropFirst(transitStart)) == Array(walkingGlove.commands.dropFirst(walkingStart)))
+        coordinator.confirmAtStop(now: epoch.addingTimeInterval(7))
+        #expect(coordinator.phase == .waitingAtStop(leg: 1))
+        #expect(controller.navigation.activeBeacon == nil && controller.navigation.state == .idle)
+        #expect(glove.commands.last == .stop)
+    }
+
+    @Test func gpsLossNearStopDoesNotFinishWalkingAndGuidanceRecovers() throws {
+        let plan = pointingPlan()
+        let glove = SimulatedGlove()
+        let controller = PointController(glove: glove)
+        glove.connect()
+        let coordinator = JourneyCoordinator(controller: controller, transit: FakeTransit())
+        defer { coordinator.stop() }
+        try coordinator.start(plan, now: epoch)
+        let coordinate = approach(plan.rides[0].board.coordinate, meters: 100)
+        coordinator.updateLocation(fix(coordinate, seconds: 0), now: epoch)
+        coordinator.tick(now: epoch.addingTimeInterval(21))
+        controller.tick(now: epoch.addingTimeInterval(21))
+        #expect(coordinator.phase == .walking(leg: 0))
+        #expect(controller.feedback.status == .locationUnavailable)
+        coordinator.updateLocation(fix(coordinate, seconds: 22), now: epoch.addingTimeInterval(22))
+        for seconds in [22.0, 22.1, 22.21] {
+            let now = epoch.addingTimeInterval(seconds)
+            controller.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: now, reference: .trueNorth)), now: now)
+        }
+        #expect(coordinator.phase == .walking(leg: 0))
+        #expect(controller.feedback.shouldConfirm)
+        guard case .confirm = glove.commands.last else { Issue.record("Guidance did not resume"); return }
+    }
+
+    @Test func arrivalNeedsDistinctFreshFixesAndLeavesNavigationStopped() throws {
+        let plan = pointingPlan()
+        let controller = PointController(glove: SimulatedGlove())
+        let coordinator = JourneyCoordinator(controller: controller, transit: FakeTransit())
+        defer { coordinator.stop() }
+        try coordinator.start(plan, now: epoch)
+        let stop = plan.rides[0].board.coordinate
+        // Neither old, future nor imprecise fixes at the stop should end the walk.
+        for (timestamp, accuracy) in [(0.0, 5.0), (11, 5), (10, 40)] {
+            #expect(coordinator.updateLocation(fix(stop, seconds: timestamp, accuracy: accuracy),
+                                               now: epoch.addingTimeInterval(10)) == nil)
+            #expect(coordinator.phase == .walking(leg: 0))
+        }
+        let first = fix(stop, seconds: 11)
+        coordinator.updateLocation(first, now: epoch.addingTimeInterval(11))
+        coordinator.updateLocation(first, now: epoch.addingTimeInterval(11.5))
+        #expect(coordinator.phase == .walking(leg: 0))
+        let arrival = coordinator.updateLocation(fix(stop, seconds: 12), now: epoch.addingTimeInterval(12))
+        #expect(arrival?.isDestination == true)
+        #expect(coordinator.phase == .waitingAtStop(leg: 1))
+        // A synchronous @Published callback used to overwrite stop()'s idle state with arrived.
+        #expect(controller.navigation.state == .idle && controller.navigation.route == nil)
+    }
+
+    @Test func pointingResumesOnWalkingLegAfterAlighting() throws {
+        let plan = pointingPlan()
+        let glove = SimulatedGlove()
+        let controller = PointController(glove: glove)
+        glove.connect()
+        let coordinator = JourneyCoordinator(controller: controller, transit: FakeTransit())
+        defer { coordinator.stop() }
+        try coordinator.start(plan, now: epoch)
+        coordinator.confirmAtStop(now: epoch)
+        coordinator.confirmBoarded(now: epoch)
+        coordinator.confirmAlighted(now: epoch.addingTimeInterval(600))
+        #expect(coordinator.awaitingSignal)
+        coordinator.updateLocation(fix(plan.rides[0].alight.coordinate, seconds: 601), now: epoch.addingTimeInterval(601))
+        for step in 0...15 {
+            let now = epoch.addingTimeInterval(601 + Double(step) / 10)
+            controller.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: now, reference: .trueNorth)), now: now)
+        }
+        #expect(!coordinator.awaitingSignal)
+        #expect(coordinator.phase == .walking(leg: 2))
+        #expect(controller.feedback.shouldConfirm)
+        guard case .confirm(let duration, let intensity) = glove.commands.last else {
+            Issue.record("Walking after transit must resume motor pulses"); return
+        }
+        #expect(duration == 180 && intensity >= 200)
     }
 
     @Test func staleResultsAndUndoDoNotMoveTheJourney() throws {
