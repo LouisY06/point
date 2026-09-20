@@ -64,6 +64,11 @@ import UIKit
     private(set) var controller: PointController!
     private let locationManager = CLLocationManager()
     private var northReference = MagneticNorthCorrectionCache()
+    #if DEBUG
+    private var lastPhoneHeading: CLHeading?
+    private var lastNorthDiagnostic = Date.distantPast
+    private let northDiagnosticQueue = DispatchQueue(label: "point.north-diagnostics", qos: .utility)
+    #endif
     private var work: Task<Void, Never>?
     private var recordingLimit: Task<Void, Never>?
     private var replyListeningTask: Task<Void, Never>?
@@ -219,6 +224,9 @@ import UIKit
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        #if DEBUG
+        lastPhoneHeading = newHeading
+        #endif
         guard stage != .indoorDemo else { return }
         // Phone rotation cancels in this paired difference. Keep a valid local
         // reference through temporary GPS/compass noise instead of starting over.
@@ -230,6 +238,9 @@ import UIKit
     }
 
     private func refreshNorthCorrection(now: Date = Date()) {
+        #if DEBUG
+        defer { recordNorthDiagnostics(now: now) }
+        #endif
         let authorized = locationManager.authorizationStatus == .authorizedWhenInUse
             || locationManager.authorizationStatus == .authorizedAlways
         guard authorized, stage != .indoorDemo else {
@@ -238,6 +249,41 @@ import UIKit
         }
         deviceConnection.glove.northCorrection = northReference.correction(at: currentLocation, now: now)
     }
+
+    #if DEBUG
+    /// A local snapshot for connected-device troubleshooting; no coordinates, destinations or credentials.
+    private func recordNorthDiagnostics(now: Date) {
+        guard now.timeIntervalSince(lastNorthDiagnostic) >= 2 else { return }
+        lastNorthDiagnostic = now
+        func number(_ value: Double?) -> Any {
+            guard let value, value.isFinite else { return NSNull() }
+            return value
+        }
+        let glove = deviceConnection.glove
+        let correction = glove.northCorrection
+        let snapshot: [String: Any] = [
+            "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            "timestamp": now.timeIntervalSince1970,
+            "stage": String(describing: stage),
+            "locationAuthorization": locationManager.authorizationStatus.rawValue,
+            "locationAccuracy": number(currentLocation?.horizontalAccuracy),
+            "locationAge": number(currentLocation.map { now.timeIntervalSince($0.timestamp) }),
+            "phoneHeadingAccuracy": number(lastPhoneHeading?.headingAccuracy),
+            "phoneTrueHeading": number(lastPhoneHeading?.trueHeading),
+            "phoneMagneticHeading": number(lastPhoneHeading?.magneticHeading),
+            "phoneHeadingAge": number(lastPhoneHeading.map { now.timeIntervalSince($0.timestamp) }),
+            "correctionDegrees": number(correction?.degrees),
+            "correctionUncertainty": number(correction?.uncertainty),
+            "correctionAge": number(correction.map { now.timeIntervalSince($0.timestamp) }),
+            "gloveMountUncertainty": number(glove.pointingCalibration?.uncertainty),
+            "gloveCalibration": glove.sensorHealth.map { Int($0.calibration) } as Any? ?? NSNull(),
+            "gloveMessage": glove.message ?? "none"
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: snapshot, options: [.prettyPrinted, .sortedKeys]) else { return }
+        let url = URL.documentsDirectory.appending(path: "north-reference-diagnostics.json")
+        northDiagnosticQueue.async { try? data.write(to: url, options: .atomic) }
+    }
+    #endif
 
     func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool {
         deviceConnection.isConnected

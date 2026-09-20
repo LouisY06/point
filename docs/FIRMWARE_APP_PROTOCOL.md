@@ -171,22 +171,38 @@ glove.trueHeading = wrap360(glove.magneticHeading + declination)
 The phone can face another direction: its orientation cancels in the difference.
 The phone supplies the local north correction, not glove pointing. The app runs
 phone heading updates in real-glove mode and caches a valid paired correction in memory.
-Capturing requires a heading no older than five seconds and a location no older than
-60 seconds with horizontal accuracy within 250 m. The local correction lasts at most
+Capturing requires at least three valid paired headings spanning 250 ms, all within
+a two-second window, whose true-minus-magnetic offsets agree within 1°. Each heading
+must be no older than five seconds, with a location no older than 60 seconds and
+horizontal accuracy within 250 m. The local correction lasts at most
 30 minutes and stays within 2 km of its capture location (including both fixes' uncertainty).
 Location callbacks invalidate a reference after leaving that area even before another heading
-arrives. Missing, invalid, older or less accurate phone updates do not replace a usable
-reference or extend its lifetime. Resuming the app or reconnecting BLE can restore the
+arrives. Missing, invalid, older or unstable paired updates do not replace a usable
+reference or extend its lifetime. A new stable cluster can establish a changed offset.
+Resuming the app or reconnecting BLE can restore the
 cached reference; revoking location access clears it. These are conservative local reuse
 limits, not a measured guarantee of compass accuracy.
 
-The app still conservatively adds phone heading uncertainty to the glove estimate;
-combined uncertainty above 25° pauses output. Live glove samples still expire after
+`CLHeading.headingAccuracy` describes the phone's magnetic azimuth, not the uncertainty
+of the local north offset. The paired subtraction removes the common phone-azimuth
+component. The app therefore uses a separate **provisional 5° declination allowance plus
+the observed offset spread**, added to the glove estimate. This allowance is an engineering
+choice, not an accuracy figure reported by Apple or a guarantee against local magnetic
+interference. This corrects the observed failure where phone error of about 19° plus a
+12° glove estimate rejected an otherwise valid north reference. Combined uncertainty
+above 25° still pauses output, with a different message from a missing north reference.
+Live glove samples still expire after
 500 ms, and route GPS checks are unchanged. Relative yaw is never corrected this way.
 Missing/expired correction, calibration loss and stale glove samples clear guidance.
 
 References: [Bosch BNO055 datasheet](https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bno055-ds000.pdf)
 (NDOF, axis remap, CALIB_STAT) and [Apple CLHeading](https://developer.apple.com/documentation/corelocation/clheading)
+([headingAccuracy](https://developer.apple.com/documentation/corelocation/clheading/headingaccuracy)
+and [trueHeading](https://developer.apple.com/documentation/corelocation/clheading/trueheading)).
+
+Debug builds write a latest-value snapshot to `Documents/north-reference-diagnostics.json`
+for connected-device troubleshooting. It contains sensor accuracy/age, headings, accepted
+correction, glove status and build number; no coordinates, destinations or credentials.
 (paired magnetic/true headings).
 
 ### HAPTIC — `03` → `83`
