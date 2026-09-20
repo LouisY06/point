@@ -34,6 +34,37 @@ import Testing
         #expect(output.playing)
         #expect(output.bursts == 2)
         #expect(output.duration == 0.35)
+        #expect(output.stops == 0) // Do not stop and start the cached player at the same timestamp.
+    }
+
+    @Test func failureAfterAcceptedStartClearsMeterAndRetriesWithFreshEngine() {
+        let output = FakePhoneHaptics()
+        let playback = PhoneHapticPlayback(output: output)
+        playback.update(intensity: 0.8, isActive: true, now: 10)
+        #expect(playback.submittedIntensity == 0.8)
+        output.onInterruption?(.playbackFailed) // Hardware rejects playback after start returned.
+        #expect(playback.submittedIntensity == 0)
+        #expect(playback.errorMessage != nil)
+        #expect(output.shutdowns == 1)
+        playback.update(intensity: 0.8, isActive: true, now: 10.05)
+        #expect(output.preparations == 1)
+        playback.update(intensity: 0.8, isActive: true, now: 11)
+        #expect(output.preparations == 2)
+        #expect(output.playing)
+        #expect(playback.errorMessage == nil)
+    }
+
+    @Test func supersededDirectionDoesNotPlayAfterStartupFinishes() {
+        let output = FakePhoneHaptics()
+        let playback = PhoneHapticPlayback(output: output)
+        playback.update(intensity: 0.8, isActive: true, now: 1, shouldPlay: { false })
+        #expect(output.preparations == 1)
+        #expect(output.bursts == 0)
+        #expect(playback.submittedIntensity == 0)
+        playback.update(intensity: 0.6, isActive: true, now: 1.1)
+        #expect(playback.submittedIntensity == 0.6)
+        output.onInterruption?(.engineStopped)
+        #expect(playback.submittedIntensity == 0)
     }
 
     @Test func engineInterruptionRecoversOnNextGuidanceUpdate() {
@@ -41,7 +72,7 @@ import Testing
         let playback = PhoneHapticPlayback(output: output)
         playback.update(intensity: 0.8, isActive: true, now: 1)
         output.playing = false
-        output.onInterruption?()
+        output.onInterruption?(.engineStopped)
         #expect(playback.errorMessage != nil)
         playback.update(intensity: 0.6, isActive: true, now: 1.05)
         #expect(output.playing)
@@ -78,7 +109,7 @@ import Testing
         let oldInterruption = output.onInterruption
         playback.shutdown()
         playback.update(intensity: 0.8, isActive: true, now: 2)
-        oldInterruption?()
+        oldInterruption?(.engineStopped)
         #expect(playback.errorMessage == nil)
         #expect(output.playing)
         playback.update(intensity: 0.8, isActive: false, now: 2.05)
@@ -89,10 +120,11 @@ import Testing
     }
 }
 
-@MainActor private final class FakePhoneHaptics: PhoneHapticOutput {
-    var onInterruption: (@MainActor () -> Void)?
+private final class FakePhoneHaptics: PhoneHapticOutput {
+    var onInterruption: ((PhoneHapticInterruption) -> Void)?
     var preparations = 0
     var shutdowns = 0
+    var stops = 0
     var bursts = 0
     var playing = false
     var duration: TimeInterval?
@@ -100,7 +132,7 @@ import Testing
     var failChange = false
     enum Failure: Error { case interrupted }
 
-    func prepare(onInterruption: @escaping @MainActor () -> Void) throws {
+    func prepare(onInterruption: @escaping (PhoneHapticInterruption) -> Void) throws {
         preparations += 1
         if failPrepare { throw Failure.interrupted }
         self.onInterruption = onInterruption
@@ -113,6 +145,6 @@ import Testing
     func changeIntensity(_ intensity: Double) throws {
         if failChange { throw Failure.interrupted }
     }
-    func silence() { playing = false }
+    func silence() { stops += 1; playing = false }
     func shutdown() { shutdowns += 1; playing = false }
 }

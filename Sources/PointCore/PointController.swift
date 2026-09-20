@@ -5,7 +5,7 @@ import Foundation
 /// App composition boundary: map/session → direction feedback → replaceable glove transport.
 @MainActor public final class PointController: ObservableObject {
     public let navigation: NavigationSession
-    public let glove: any GloveTransport
+    public private(set) var glove: any GloveTransport
     @Published public private(set) var feedback = DirectionFeedback(status: .inactive, angularErrorDegrees: nil, distanceToBeaconMeters: nil)
     @Published public private(set) var connection: GloveConnection = .disconnected
     @Published public private(set) var batteryPercent: Int?
@@ -18,12 +18,36 @@ import Foundation
     private var previousTarget: Int?
     private var routeRequestID = UUID()
     private var lastGestureAt: Date?
+    private var outputEnabled = true
 
     public init(glove: any GloveTransport) {
         self.glove = glove
         navigation = NavigationSession()
         connection = glove.connection
         glove.onEvent = { [weak self] event in self?.receive(event) }
+    }
+
+    /// Select physical hardware only for real glove mode; demo and phone mode keep
+    /// their own transport. Never transfer heading or pending cues between devices.
+    public func useTransport(_ transport: any GloveTransport, activate: Bool = true) {
+        resetFeedback()
+        glove.onEvent = nil
+        glove = transport
+        connection = .disconnected
+        capabilities = nil
+        gloveHeading = nil
+        batteryPercent = nil
+        lastGestureAt = nil
+        lastTransportError = nil
+        glove.onEvent = { [weak self] event in self?.receive(event) }
+        if activate { glove.connect() }
+        else { glove.disconnect(); tick() }
+    }
+
+    public func setOutputEnabled(_ enabled: Bool) {
+        outputEnabled = enabled
+        if !enabled { resetFeedback() }
+        tick()
     }
 
     public func start(_ route: RoutePlan, at location: CLLocation? = nil) throws {
@@ -101,14 +125,17 @@ import Foundation
                                    location: navigation.locationQuality == .usable ? navigation.location : nil,
                                    heading: gloveHeading,
                                    connected: connection == .ready && capabilities?.vibration == true,
-                                   enabled: navigation.state == .navigating,
+                                   enabled: outputEnabled && navigation.state == .navigating,
                                    rerouteRequired: navigation.rerouteRequired, now: now)
         if let command = scheduler.command(for: feedback, now: now) { send(command) }
     }
 
     /// Event cues (a vehicle arriving) bypass the alignment scheduler. Callers send them after
     /// any `stop()` so the reset's `.stop` cannot truncate the pattern.
-    public func emit(_ command: HapticCommand) { send(command) }
+    public func emit(_ command: HapticCommand) {
+        guard outputEnabled || command == .stop else { return }
+        send(command)
+    }
 
     private func resetFeedback() {
         engine.reset()

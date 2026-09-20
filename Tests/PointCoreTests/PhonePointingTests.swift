@@ -6,6 +6,57 @@ import Testing
 struct PhonePointingTests {
     let now = Date(timeIntervalSince1970: 10_000)
 
+    @Test func explainsMissingStaleInaccurateAndNearbyGPSSeparately() {
+        let origin = CLLocationCoordinate2D(latitude: 42, longitude: -71)
+        let target = PingTarget(coordinate: .init(latitude: 42.001, longitude: -71), instruction: "North",
+                                isFinalDestination: true, bearingAfterTurnDegrees: 0)
+        let heading = HeadingReading(degrees: 0, accuracyDegrees: 2, timestamp: now, reference: .trueNorth)
+        var engine = DirectionFeedbackEngine()
+        func feedback(_ coordinate: CLLocationCoordinate2D, accuracy: Double, age: Double) -> DirectionFeedback {
+            let location = CLLocation(coordinate: coordinate, altitude: 0, horizontalAccuracy: accuracy,
+                                      verticalAccuracy: 2, timestamp: now.addingTimeInterval(-age))
+            return engine.evaluate(target: target, location: location, heading: heading, connected: true,
+                                   enabled: true, rerouteRequired: false, now: now)
+        }
+        #expect(feedback(origin, accuracy: 40, age: 0).locationIssue == .inaccurate(meters: 40))
+        #expect(feedback(origin, accuracy: 3, age: 6).locationIssue == .stale(seconds: 6))
+        let nearby = feedback(target.coordinate, accuracy: 3, age: 0)
+        #expect(nearby.locationIssue == .nearby(distance: 0, uncertainty: 3))
+        #expect(nearby.distanceToBeaconMeters == 0)
+        #expect(nearby.angularErrorDegrees == nil)
+        #expect(nearby.locationIssue?.message == "Near beacon · Waiting for GPS to confirm position")
+        #expect(engine.evaluate(target: target, location: nil, heading: heading, connected: true,
+                                enabled: true, rerouteRequired: false, now: now).locationIssue == .missing)
+    }
+
+    @Test @MainActor func onePoorFixDoesNotEraseFreshPhoneDirectionButOldFixStillExpires() throws {
+        let origin = CLLocationCoordinate2D(latitude: 42, longitude: -71)
+        let target = CLLocationCoordinate2D(latitude: 42.001, longitude: -71)
+        let route = try AppleMapsService.makeRoute(steps: [], fallbackCoordinates: [origin, target], name: "GPS regression")
+        let session = NavigationSession()
+        func fix(accuracy: Double, seconds: Double) -> CLLocation {
+            CLLocation(coordinate: origin, altitude: 0, horizontalAccuracy: accuracy, verticalAccuracy: 2,
+                       timestamp: now.addingTimeInterval(seconds))
+        }
+        let good = fix(accuracy: 3, seconds: 0)
+        try session.start(route, at: good, now: now)
+        session.updateLocation(good, now: now)
+        session.updateLocation(fix(accuracy: 50, seconds: 0.2), now: now.addingTimeInterval(0.2))
+        #expect(session.locationQuality == .degraded)
+        var engine = DirectionFeedbackEngine()
+        func feedback(at seconds: Double) -> DirectionFeedback {
+            let time = now.addingTimeInterval(seconds)
+            return engine.evaluate(target: session.activeBeacon, location: session.location,
+                                   heading: HeadingReading(degrees: 0, accuracyDegrees: 2, timestamp: time, reference: .trueNorth),
+                                   connected: true, enabled: true, rerouteRequired: false, now: time)
+        }
+        #expect(feedback(at: 0.3).angularErrorDegrees != nil)
+        #expect(feedback(at: 5.1).status == .locationUnavailable)
+        session.updateLocation(fix(accuracy: 3, seconds: 6), now: now.addingTimeInterval(6))
+        #expect(feedback(at: 6).angularErrorDegrees != nil)
+        #expect(session.beaconIndex == 1) // No arrival is invented by retaining a recent fix.
+    }
+
     @Test func walkingRangeHasFocusedCenterAndGentleEdges() {
         func strength(_ angle: Double) -> Double {
             PhoneHapticEnvelope.targetIntensity(errorDegrees: angle, angleRange: .walkingRoute)

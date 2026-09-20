@@ -17,7 +17,7 @@ struct PhonePointingStatusView: View {
                 .fixedSize(horizontal: false, vertical: true)
             ProgressView(value: tester.intensity / 0.8)
                 .tint(PointTheme.action)
-                .accessibilityLabel("Pointing vibration strength")
+                .accessibilityLabel("Vibration signal strength")
                 .accessibilityValue("\(Int(tester.intensity / 0.8 * 100)) percent")
             if let distance = tester.distanceMeters {
                 HStack {

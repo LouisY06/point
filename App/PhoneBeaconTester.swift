@@ -63,7 +63,7 @@ import UIKit
                 let phase = elapsed.truncatingRemainder(dividingBy: duration + gap)
                 let strength = phase < duration ? 0.8 : 0
                 haptics.update(intensity: strength, now: Date())
-                intensity = haptics.errorMessage == nil ? strength : 0
+                intensity = strength > 0 ? haptics.submittedIntensity : 0
                 do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
             }
             haptics.silence()
@@ -151,14 +151,17 @@ import UIKit
         if activeBeaconIndex != session.beaconIndex { activeBeaconIndex = session.beaconIndex }
         let feedback = feedbackEngine.evaluate(
             target: session.activeBeacon,
-            location: session.locationQuality == .usable ? session.location : nil,
+            // A poor new fix must not discard a still-fresh good fix. The engine applies
+            // the same 5-second expiry and uncertainty checks to the retained location.
+            location: session.location,
             heading: heading, connected: true, enabled: true, rerouteRequired: session.rerouteRequired, now: now)
         let displayedDistance = feedback.distanceToBeaconMeters?.rounded()
         let displayedAngle = feedback.angularErrorDegrees?.rounded()
         if distanceMeters != displayedDistance { distanceMeters = displayedDistance }
         if angularErrorDegrees != displayedAngle { angularErrorDegrees = displayedAngle }
-        if feedback.angularErrorDegrees != nil, let location = session.location, let heading {
-            let note = "Estimated direction · GPS ±\(Int(location.horizontalAccuracy.rounded())) m · Compass ±\(Int(heading.accuracyDegrees.rounded()))°"
+        if let location = session.location, let heading {
+            let age = max(0, now.timeIntervalSince(location.timestamp))
+            let note = "GPS ±\(Int(location.horizontalAccuracy.rounded())) m · Updated \(Int(age.rounded())) s ago · Compass ±\(Int(max(0, heading.accuracyDegrees).rounded()))°"
             if accuracyNote != note { accuracyNote = note }
         } else if accuracyNote != nil { accuracyNote = nil }
         let sample = motion.deviceMotion
@@ -169,22 +172,23 @@ import UIKit
         // Uncertainty remains part of the glove's strict alignment confirmation, not this amplitude.
         let value = envelope.update(errorDegrees: feedback.angularErrorDegrees, gripValid: gripValid, now: now)
         haptics.update(intensity: value, now: now)
-        let displayedIntensity = haptics.errorMessage == nil ? (value * 100).rounded() / 100 : 0
+        let submitted = haptics.submittedIntensity
+        let displayedIntensity = value > 0.005 ? (submitted * 100).rounded() / 100 : 0
         if intensity != displayedIntensity { intensity = displayedIntensity }
 
         if let error = haptics.errorMessage { publishStatus(error); return }
         if sample == nil || !(0...0.3).contains(age) { publishStatus("Waiting for phone motion"); return }
         if !gripValid { publishStatus("Hold flat, screen down · Camera end forward"); return }
         switch feedback.status {
-        case .locationUnavailable: publishStatus("Waiting for precise GPS · Try outdoors")
+        case .locationUnavailable: publishStatus(feedback.locationIssue?.message ?? "Vibration paused · Waiting for GPS")
         case .headingUnavailable: publishStatus("Waiting for a reliable compass")
         case .calibrationRequired: publishStatus("Calibrate compass · Move away from metal")
         case .rerouteRequired: publishStatus("Off route · Choose the destination again")
-        case .aligned: publishStatus("You’re pointing toward the beacon")
-        case .checking: publishStatus("Hold that direction")
+        case .aligned: publishStatus(submitted > 0.005 ? "You’re pointing toward the beacon" : "Direction aligned · Starting vibration")
+        case .checking: publishStatus(submitted > 0.005 ? "Hold that direction" : "Direction aligned · Starting vibration")
         case .offDirection:
             if let angle = feedback.angularErrorDegrees, abs(angle) <= 10 {
-                publishStatus("Pointing toward the estimated beacon")
+                publishStatus(submitted > 0.005 ? "Pointing toward the estimated beacon" : "Direction aligned · Starting vibration")
             } else {
                 publishStatus(value > 0.02 ? "Turn toward the beacon · Stronger means closer" : "Turn slowly to find the beacon")
             }

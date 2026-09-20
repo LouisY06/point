@@ -1,8 +1,16 @@
-# Connect the ESP32-C6 to Point
+# Connect a Point device
 
 Point now supports the echo service in `Firmware/BTTest`, introduced in firmware commit `940a071`. This verifies the Bluetooth data path. It does not enable glove heading, gestures, battery telemetry, or vibration.
 
-## On the bench
+The active hardware is now ESP32-S3. Its current Arduino circuit sketch is USB-only.
+Do not flash the C6 prototype to the S3. The app is ready for the [proposed S3 BLE
+contract](FIRMWARE_APP_PROTOCOL.md), but the board still needs that implementation.
+After echo verification the app checks capabilities: a compatible board enables
+**Test glove vibration**, while an echo-only board shows firmware support pending.
+For real glove navigation, connect here and turn off **Phone vibration guidance**
+before starting a walk. Relative gyro yaw will display a north-reference requirement.
+
+## Legacy C6 echo test
 
 1. Build and flash `Firmware/BTTest` to the XIAO ESP32-C6 using the [firmware instructions](../Firmware/BTTest/README.md). Keep the board powered on.
 2. Disconnect nRF Connect, LightBlue, or any other phone/client from the board. This firmware accepts one connection at a time.

@@ -2,8 +2,8 @@ import Combine
 import CoreBluetooth
 import PointCore
 
-/// Foreground setup for the firmware's command/status echo service. Deliberately separate
-/// from GloveTransport: this firmware cannot provide heading or drive a motor yet.
+/// Foreground BLE setup. Legacy echo verification and negotiated navigation support
+/// are separate: an echo must never be mistaken for working sensors or a motor.
 @MainActor final class DeviceConnection: NSObject, ObservableObject {
     enum Phase { case idle, starting, scanning, connecting, discovering, verifying, connected, unavailable, failed }
     struct Device: Identifiable {
@@ -19,6 +19,10 @@ import PointCore
     @Published private(set) var lastReply: String?
     @Published private(set) var verifiedAt: Date?
     @Published private(set) var permissionDenied = false
+    @Published private(set) var firmwareMessage = "Glove firmware support pending"
+    @Published private(set) var canTestMotor = false
+    let glove = FirmwareGlove()
+    private var firmwareLoop: Task<Void, Never>?
 
     private var central: CBCentralManager?
     private var peripherals: [UUID: CBPeripheral] = [:]
@@ -29,6 +33,31 @@ import PointCore
     private var probe: BTEchoProbe?
     private var timeout: Task<Void, Never>?
     private var wantsScan = false
+
+    override init() {
+        super.init()
+        glove.write = { [weak self] data in
+            guard let self, self.isConnected, let peripheral = self.peripheral,
+                  let command = self.commandCharacteristic else { throw GloveTransportError.notConnected }
+            peripheral.writeValue(data, for: command, type: .withResponse)
+        }
+        glove.onChange = { [weak self] in
+            guard let self else { return }
+            let value = self.glove.message ?? "Glove firmware support pending"
+            if self.firmwareMessage != value { self.firmwareMessage = value }
+            let ready = self.glove.connection == .ready && self.glove.capabilities?.vibration == true
+            if self.canTestMotor != ready { self.canTestMotor = ready }
+        }
+    }
+
+    func testMotor() {
+        do {
+            try glove.send(.confirm(durationMs: 180, intensity: 160))
+            message = "Motor test requested. A device reply confirms receipt, not physical vibration."
+        } catch GloveTransportError.busy {
+            message = "The glove is finishing a stop request. Try the motor test again in a moment."
+        } catch { message = "The glove is not ready for a motor test. Reconnect and check its firmware." }
+    }
 
     var isConnected: Bool { phase == .connected }
     var isWorking: Bool { [.starting, .scanning, .connecting, .discovering, .verifying].contains(phase) }
@@ -90,7 +119,7 @@ import PointCore
             connection.central?.stopScan()
             connection.phase = .idle
             if connection.devices.isEmpty {
-                connection.message = "No device found. Power on BT Test C6, keep it nearby, and disconnect it from other Bluetooth apps before scanning again."
+                connection.message = "No device found. Power on your Point device with Bluetooth firmware, keep it nearby, and disconnect it from other Bluetooth apps before scanning again. The serial-only circuit test will not appear."
             }
         }
     }
@@ -114,6 +143,9 @@ import PointCore
         guard phase == .connected || phase == .discovering,
               let peripheral, let commandCharacteristic,
               statusCharacteristic?.isNotifying == true else { return }
+        firmwareLoop?.cancel()
+        firmwareLoop = nil
+        glove.disconnect()
         do { probe = try BTEchoProbe() }
         catch { fail("Could not prepare the connection test."); return }
         guard let probe else { return }
@@ -157,6 +189,9 @@ import PointCore
     }
 
     private func resetLink() {
+        firmwareLoop?.cancel()
+        firmwareLoop = nil
+        glove.disconnect()
         timeout?.cancel()
         timeout = nil
         wantsScan = false
@@ -192,6 +227,13 @@ import PointCore
         probe = nil
         verifiedAt = Date()
         phase = .connected
+        glove.beginLink()
+        firmwareLoop = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.glove.tick()
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            }
+        }
     }
 }
 
@@ -228,7 +270,7 @@ extension DeviceConnection: @preconcurrency CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         guard phase == .scanning, !retiring.contains(peripheral.identifier) else { return }
-        let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name ?? "BT Test device"
+        let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name ?? "Point device"
         peripherals[peripheral.identifier] = peripheral
         let device = Device(id: peripheral.identifier, name: name, signal: RSSI.intValue == 127 ? nil : RSSI.intValue)
         if let index = devices.firstIndex(where: { $0.id == device.id }) { devices[index] = device }
@@ -294,7 +336,12 @@ extension DeviceConnection: @preconcurrency CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard self.peripheral === peripheral, characteristic === commandCharacteristic, phase == .verifying else { return }
+        guard self.peripheral === peripheral, characteristic === commandCharacteristic else { return }
+        if phase == .connected {
+            if error != nil { glove.writeFailed() }
+            return
+        }
+        guard phase == .verifying else { return }
         guard error == nil else { fail("The device rejected the test message. Check the firmware and reconnect."); return }
         probe?.acknowledgeWrite()
         finishProbeIfReady()
@@ -303,6 +350,7 @@ extension DeviceConnection: @preconcurrency CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard self.peripheral === peripheral, characteristic === statusCharacteristic else { return }
         guard error == nil, let data = characteristic.value else { fail("Could not read the device reply. Reconnect and try again."); return }
+        if phase == .connected { glove.receive(data); return }
         lastReply = String(data: data, encoding: .utf8) ?? "Received \(data.count) bytes"
         guard phase == .verifying else { return }
         probe?.receive(data)

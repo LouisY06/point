@@ -43,6 +43,8 @@ No key is required (20 MBTA requests/min); add `MBTA_API_KEY` to `.env` for the 
 
 ## Device connection
 
+For indoor virtual beacons, tap the hand and say **“Can you go into demo mode?”** (or type it). Place camera beacons around the room, then start the indoor route. This uses local camera coordinates and phone vibration, without an Apple Maps route. Glove orientation calibration and motor integration for indoor targets are still pending. See [indoor demo](docs/INDOOR_DEMO.md).
+
 To test before the glove is ready, tap **Test beacons** on the home screen. Use the camera to place nearby points (0.5–8 m), then hold the phone flat, screen down, with the camera end along your pointing finger. Vibration smoothly strengthens toward the next beacon. Real walking routes also offer **Phone vibration guidance**, using GPS and compass instead. Both need a physical iPhone for vibration. See [phone and nearby-beacon testing](docs/PHONE_BEACON_TEST.md).
 
 The ESP32-C6 firmware and app now share a Bluetooth connection test. On a physical iPhone, open the device icon at the top right, scan for **BT Test C6**, select it, and wait for **Connection verified**. This checks a real write/notification round trip; the firmware does not yet expose sensors or control vibration. The simulator can preview the setup screen but cannot perform this hardware test.

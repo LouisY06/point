@@ -24,6 +24,14 @@ Voice input: a microphone becomes a waveform while actually recording. Search: a
 
 Do not use color, waveform motion, or vibration as the only status communication. Use plain status text and VoiceOver announcements. No fake “connected” indicator. Demo navigation is explicitly labeled and never mistaken for a live route. Keep Apple Maps attribution visible on both sample and live maps.
 
+## Transit surfaces
+
+Route choices use transit badges followed by walking time, transfer count, boarding stop, and alighting stop. Use semantic primary text inside these tappable rows; the action tint must not turn the whole itinerary blue. Transit badges calculate black or white label contrast against their line color.
+
+The trip panel has a 44-point drag/tap handle and a bounded, scrollable body. Its collapsed height follows the current instruction and action, including wrapped text; hidden itinerary rows must not peek out at the bottom. Once a trip starts, prioritize its current instruction over the destination address. Keep body text fully scalable; cap only map annotations, decorative status glyphs, and the compact map toolbar at XXXL. At accessibility sizes, the panel scrolls when the header exceeds its maximum height. A collapsed panel returns to the top of its content when closed.
+
+Use bus symbols for buses and train symbols for rail, label boarding overrides explicitly, and keep “I'm on board” / “I'm off” available without live vehicle data. Completed map legs fade without resetting the camera. Simulated transit data is only available through explicit debug launch arguments.
+
 ## Motion reference
 
 Apple, [Enhance your UI animations and transitions](https://developer.apple.com/videos/play/wwdc2024/10145/): source continuity and interruption-friendly transitions. This implementation uses that principle rather than adding unrelated decorative motion.
@@ -37,3 +45,7 @@ The home background is a lightly blurred monochrome map under slowly drifting ch
 ## Temporary voice preview
 
 Tapping the glove plays a cancellable, simulated sequence: waveform and word-by-word “Take me to Shake Shack”, a 1.5-second route preparation indicator, then the map portal. No microphone, speech model, or routes API is called in this preview. Live voice remains opt-in through POINT_LIVE_VOICE.
+
+## Indoor demo
+
+Keep the camera prominent. Use a compact headline navigation bar, a title2 semibold task heading, one body instruction with 3-point extra line spacing, and body-size actions. Beacon counts communicate route setup; technical and privacy details belong in Demo help. Use a content-height bottom panel capped at 56% of the available height with scrolling for large Dynamic Type. Keep all text on opaque semantic surfaces. The floor cursor is a world-space gold ring at the exact anchor placement point. Tall beacons grow upward over 380 ms, or fade with Reduce Motion.

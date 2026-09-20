@@ -15,8 +15,8 @@ import Foundation
         case waitingAtStop(leg: Int)
         case vehicleArriving(leg: Int, tripID: String)
         /// `confirmed` is false after an automatic departure until the user confirms boarding.
-        case riding(leg: Int, tripID: String, confirmed: Bool, tracking: Tracking)
-        case alighting(leg: Int, tripID: String)
+        case riding(leg: Int, tripID: String?, confirmed: Bool, tracking: Tracking)
+        case alighting(leg: Int, tripID: String?)
         case needsReplan(reason: String)
         case arrived
 
@@ -85,6 +85,7 @@ import Foundation
     private let transit: any TransitDataSource
     private let pollInterval: Duration
     private var phaseToken = UUID()
+    private var pollToken = UUID()
     private var poll: Task<Void, Never>?
     private var subscriptions = Set<AnyCancellable>()
     private var lastFix: CLLocation?
@@ -177,6 +178,10 @@ import Foundation
 
     public func confirmBoarded(now: Date = Date()) {
         switch phase {
+        case .waitingAtStop(let leg):
+            // A manual boarding report is valid even when predictions have not identified a trip.
+            // Keep the destination visible without pretending to track a particular vehicle.
+            beginRiding(leg: leg, tripID: nil, confirmed: true, now: now)
         case .vehicleArriving(let leg, let trip):
             beginRiding(leg: leg, tripID: trip, confirmed: true, now: now)
         case .riding(let leg, let trip, false, let tracking):
@@ -289,6 +294,7 @@ import Foundation
         vehicleMisses = 0
         switch phase {
         case .riding(let leg, let trip, let confirmed, let tracking):
+            guard let trip else { return } // A manually boarded, untracked ride has no vehicle to follow.
             if tracking == .lost { advance(.riding(leg: leg, tripID: trip, confirmed: confirmed, tracking: .live), keepPolling: true) }
             if let platform = vehicle.platformStopID, ride.alightPlatformIDs.contains(platform) {
                 if vehicle.status == .inTransitTo, cued.insert("\(trip)/next").inserted { onEvent?(.nextStopIsYours(ride)) }
@@ -321,10 +327,10 @@ import Foundation
 
     // MARK: Transitions
 
-    private func beginWalk(leg: Int, _ walk: RoutePlan, at fix: CLLocation?, now: Date) throws {
+    private func beginWalk(leg: Int, _ walk: RoutePlan, at fix: CLLocation?, now: Date, waitForSignal: Bool = false) throws {
         advance(.walking(leg: leg))
         lastNearBoardStopAt = nil
-        awaitingSignal = false
+        awaitingSignal = waitForSignal
         try controller.start(walk, at: fix)
         onEvent?(.walkingLegStarted(leg: leg, toward: walk.destinationName))
         // Departure countdown for the stop this leg leads to, shown while walking (no cue).
@@ -387,14 +393,15 @@ import Foundation
         handleVehicle(result, now: now)
     }
 
-    private func beginRiding(leg: Int, tripID: String, confirmed: Bool, now: Date) {
+    private func beginRiding(leg: Int, tripID: String?, confirmed: Bool, now: Date) {
         guard let ride = ride(at: leg) else { return }
-        advance(.riding(leg: leg, tripID: tripID, confirmed: confirmed, tracking: .live))
+        advance(.riding(leg: leg, tripID: tripID, confirmed: confirmed, tracking: tripID == nil ? .lost : .live))
         departedAt = now
         vehicleMisses = 0
         farFromVehiclePolls = 0
         countdown = nil
         onEvent?(confirmed ? .boarded(ride) : .departedTentatively(ride))
+        guard let tripID else { onEvent?(.trackingLost(ride)); return }
         startPolling(every: pollInterval) { [weak self] in
             guard let self else { return { _ in } }
             let result: VehicleStatus?? = try? await transit.vehicle(forTrip: tripID)
@@ -410,10 +417,9 @@ import Foundation
         switch plan.legs[next] {
         case .walk(let walk):
             do {
-                try beginWalk(leg: next, walk, at: nil, now: now)
+                try beginWalk(leg: next, walk, at: nil, now: now, waitForSignal: !Self.isFresh(lastFix, now: now))
                 // Stepping off inside a station: no fresh GPS yet, so hold instructions until it returns.
-                if !Self.isFresh(lastFix, now: now) {
-                    awaitingSignal = true
+                if awaitingSignal {
                     onEvent?(.awaitingSignal(leg: next))
                 }
             } catch { replan("Couldn't start the next walking leg.") }
@@ -439,12 +445,17 @@ import Foundation
     /// Each loop fetches, then applies its result only if the phase has not moved on.
     private func startPolling(every interval: Duration, _ work: @escaping () async -> (Date) -> Void) {
         poll?.cancel()
-        let token = phaseToken
+        let loop = UUID()
+        pollToken = loop
         poll = Task { [weak self] in
             while !Task.isCancelled {
+                guard let self, self.pollToken == loop else { return }
+                let token = self.phaseToken
                 let apply = await work()
-                guard let self, self.phaseToken == token, !Task.isCancelled else { return }
-                apply(Date())
+                guard self.pollToken == loop, !Task.isCancelled else { return }
+                // The loop survives related phase changes, but a response fetched for an old
+                // phase cannot act on the new one. Capture a fresh token for every request.
+                if self.phaseToken == token { apply(Date()) }
                 try? await Task.sleep(for: interval)
             }
         }
@@ -467,6 +478,7 @@ import Foundation
                 return { now in self.applyArrivalsPoll(result, now: now) }
             }
         case .riding(_, let trip, _, _), .alighting(_, let trip):
+            guard let trip else { return }
             startPolling(every: pollInterval) { [weak self] in
                 guard let self else { return { _ in } }
                 let result: VehicleStatus?? = try? await transit.vehicle(forTrip: trip)

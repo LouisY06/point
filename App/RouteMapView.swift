@@ -75,7 +75,7 @@ struct RouteMapView: View {
     var journey: JourneyPlan?
     var journeyLegIndex: Int?
     @ObservedObject var telemetry: RouteMapTelemetry
-    @StateObject private var drawing: RouteMapDrawing
+    @State private var drawing: RouteMapDrawing
     @State private var position: MapCameraPosition = .automatic
     @State private var mapHeading: Double = 0
 
@@ -87,14 +87,21 @@ struct RouteMapView: View {
         self.telemetry = telemetry
         self.journey = journey
         self.journeyLegIndex = journeyLegIndex
-        _drawing = StateObject(wrappedValue: RouteMapDrawing(route: route, journey: journey, legIndex: journeyLegIndex))
+        _drawing = State(initialValue: RouteMapDrawing(route: route, journey: journey, legIndex: journeyLegIndex))
     }
 
     /// The vehicle glyph for the stop this walking leg ends on.
     private var boardGlyph: String {
-        guard let journey, let index = journeyLegIndex ?? 0 as Int?, journey.legs.indices.contains(index + 1),
+        guard let journey, let index = journey.legs.firstIndex(where: { if case .walk(let walk) = $0 { return walk.id == route.id }; return false }),
+              journey.legs.indices.contains(index + 1),
               case .ride(let ride) = journey.legs[index + 1] else { return "tram.fill" }
         return ride.route.isBus ? "bus.fill" : "tram.fill"
+    }
+
+    private var walkPassed: Bool {
+        guard let journey, let leg = journeyLegIndex,
+              let walk = journey.legs.firstIndex(where: { if case .walk(let plan) = $0 { return plan.id == route.id }; return false }) else { return false }
+        return walk < leg
     }
 
     var body: some View {
@@ -135,8 +142,8 @@ struct RouteMapView: View {
                     StopBeacon(color: .red, glyph: "figure.walk", passed: ride.isPassed, label: "Get off at \(ride.alight.name)")
                 }
             }
-            MapPolyline(drawing.polyline).stroke(.white, lineWidth: 9)
-            MapPolyline(drawing.polyline).stroke(PointTheme.route, lineWidth: 5)
+            MapPolyline(drawing.polyline).stroke(.white.opacity(walkPassed ? 0.3 : 1), lineWidth: 9)
+            MapPolyline(drawing.polyline).stroke(PointTheme.route.opacity(walkPassed ? 0.35 : 1), lineWidth: 5)
             if let start = route.checkpoints.first {
                 Annotation("Start", coordinate: start.coordinate, anchor: .center) {
                     Circle().fill(PointTheme.accent).frame(width: 16, height: 16)
@@ -152,7 +159,7 @@ struct RouteMapView: View {
                         .font(beacon.isFinalDestination ? .title2.bold() : .caption2)
                         .foregroundStyle(.white)
                         .padding(beacon.isFinalDestination ? 12 : 5)
-                        .background(isBoard ? Color.green : PointTheme.accent, in: Circle())
+                        .background((isBoard ? Color.green : PointTheme.accent).opacity(walkPassed ? 0.35 : 1), in: Circle())
                         .overlay(Circle().stroke(.white, lineWidth: index == activeBeaconIndex ? 3 : 0).padding(-5))
                         .accessibilityLabel(index == activeBeaconIndex ? (isBoard ? "Active beacon: the stop to get on" : "Active beacon")
                                             : beacon.isFinalDestination ? (isBoard ? "Stop to get on" : "Destination") : "Route beacon \(index + 1)")
@@ -165,6 +172,10 @@ struct RouteMapView: View {
             if abs(mapHeading - $0.camera.heading) > 0.2 { mapHeading = $0.camera.heading }
         }
         .onAppear { position = .region(drawing.region) }
+        .onChange(of: journeyLegIndex) { _, index in
+            // Update passed-leg styling without rebuilding the map or resetting the user's camera.
+            drawing = RouteMapDrawing(route: route, journey: journey, legIndex: index)
+        }
     }
 }
 

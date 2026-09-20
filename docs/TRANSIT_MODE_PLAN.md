@@ -73,8 +73,8 @@ enum Phase: Equatable {
   case walking(leg: Int)
   case waitingAtStop(leg: Int)
   case vehicleArriving(leg: Int, tripID: String)
-  case riding(leg: Int, tripID: String, confirmed: Bool, tracking: Tracking)   // Tracking: .live, .lost
-  case alighting(leg: Int, tripID: String)
+  case riding(leg: Int, tripID: String?, confirmed: Bool, tracking: Tracking)   // nil = manual boarding without a tracked trip
+  case alighting(leg: Int, tripID: String?)
   case needsReplan(reason: String)
   case arrived
 }
@@ -120,6 +120,8 @@ Rules:
 | Project | `Point.xcodeproj/project.pbxproj` unchanged (new files live in the Swift package) |
 
 ## Verification
+
+Simulator review and regression fixes are recorded in [TRANSIT_UI_REVIEW.md](TRANSIT_UI_REVIEW.md). Polling now keeps a separate loop identity and captures the phase token for each request, so an arrival or boarding transition cannot silently stop updates. Manual boarding from the waiting state works even when MBTA has not identified a trip; this displays unavailable tracking and retains the manual alighting action. The GPS hold is set before publishing the next walking-leg event after alighting.
 
 1. `swift test` — all new tests plus the existing 26 stay green (`PingTarget.kind` default keeps them untouched).
 2. `swift run point-demo` still runs.

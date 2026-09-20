@@ -6,7 +6,7 @@ import SwiftUI
 import UIKit
 
 @MainActor final class PointViewModel: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
-    enum Stage { case home, recording, searching, clarifying, choosing, journeyChoice, route }
+    enum Stage { case home, recording, searching, clarifying, choosing, journeyChoice, route, indoorDemo }
     @Published var stage: Stage = .home
     @Published var transcript = ""
     @Published var candidates: [PlaceCandidate] = []
@@ -39,7 +39,7 @@ import UIKit
     @Published private(set) var liveTransitData = true
     @Published private(set) var journeyReplanReason: String?
     private(set) var journey: JourneyCoordinator!
-    private let transit: MBTAClient
+    private let transit: any TransitDataSource
     private var transitRequested = false
     private var walkingRequested = false
     /// The pending confirmation is "take transit instead?" rather than "is this the place?".
@@ -49,6 +49,9 @@ import UIKit
     let phoneTester = PhoneBeaconTester()
     let recorder = VoiceRecorder()
     let glove = SimulatedGlove()
+    let deviceConnection = DeviceConnection()
+    @Published private(set) var gloveStatus = "Connect your glove in Device setup"
+    private var gloveWatchdog: Task<Void, Never>?
     private(set) var controller: PointController!
     private let locationManager = CLLocationManager()
     private var work: Task<Void, Never>?
@@ -82,9 +85,30 @@ import UIKit
         #endif
     }
     override init() {
+        #if DEBUG
+        transit = ProcessInfo.processInfo.arguments.contains("--preview-transit") ? TransitReviewDataSource() : MBTAClient(apiKey: Self.loadDevelopmentConfiguration().mbtaKey)
+        #else
         transit = MBTAClient(apiKey: Self.loadDevelopmentConfiguration().mbtaKey)
+        #endif
         super.init()
-        controller = PointController(glove: glove)
+        controller = PointController(glove: deviceConnection.glove)
+        controller.$feedback.sink { [weak self] feedback in
+            guard let self, !isDemo, !usePhoneAsGlove else { return }
+            if pointingAligned != feedback.shouldConfirm { pointingAligned = feedback.shouldConfirm }
+            let status: String
+            switch feedback.status {
+            case .aligned: status = "You're pointing the right way"
+            case .checking: status = "Hold your pointing direction"
+            case .offDirection: status = "Point toward the next beacon"
+            case .calibrationRequired: status = "Glove needs a north reference"
+            case .headingUnavailable: status = "Waiting for a fresh glove heading"
+            case .locationUnavailable: status = feedback.locationIssue?.message ?? "Waiting for GPS"
+            case .rerouteRequired: status = "Off route · Check the map before continuing"
+            case .disconnected: status = "Glove guidance unavailable · Check Device setup"
+            case .inactive: status = "Glove guidance paused"
+            }
+            if gloveStatus != status { gloveStatus = status }
+        }.store(in: &subscriptions)
         journey = JourneyCoordinator(controller: controller, transit: transit)
         journey.onEvent = { [weak self] event in self?.handle(journeyEvent: event) }
         journey.$phase.sink { [weak self] in self?.journeyPhase = $0 }.store(in: &subscriptions)
@@ -156,6 +180,7 @@ import UIKit
     }
 
     func requestLocation() {
+        guard stage != .indoorDemo else { return }
         locationManager.requestWhenInUseAuthorization()
         if locationManager.authorizationStatus == .authorizedWhenInUse || locationManager.authorizationStatus == .authorizedAlways {
             locationManager.startUpdatingLocation()
@@ -163,7 +188,7 @@ import UIKit
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        if manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways {
+        if (manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways), stage != .indoorDemo {
             manager.startUpdatingLocation()
         } else if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
             currentLocation = nil
@@ -181,7 +206,7 @@ import UIKit
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard !isDemo, let location = locations.last else { return }
+        guard !isDemo, stage != .indoorDemo, let location = locations.last else { return }
         currentLocation = location
         let previouslyOffRoute = controller.navigation.rerouteRequired
         let arrival = controller.updateLocation(location)
@@ -273,6 +298,8 @@ import UIKit
     }
 
     private func search(_ text: String) async {
+        guard !Task.isCancelled else { return }
+        if IndoorDemoCommand.matches(text) { enterIndoorDemo(); return }
         let reply = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
         if ["cancel", "never mind", "nevermind", "stop"].contains(reply) { cancel(); return }
         // "Take the T to…" plans transit; "walk me to…" skips the transit offer.
@@ -565,6 +592,12 @@ import UIKit
 
     var isWalkingLeg: Bool { if case .walking = journeyPhase { return true } else { return false } }
 
+    var currentRideIsBus: Bool {
+        guard let plan = journeyPlan, let index = journeyPhase.legIndex,
+              plan.legs.indices.contains(index), case .ride(let ride) = plan.legs[index] else { return false }
+        return ride.route.isBus
+    }
+
     /// Plain-language state for the route panel and VoiceOver.
     var journeyStatusText: String {
         guard let journeyPlan else { return "" }
@@ -587,9 +620,9 @@ import UIKit
         case .vehicleArriving(let leg, _):
             guard let ride = ride(leg) else { return "Arriving" }
             return "\(ride.route.name) toward \(ride.headsign) is here · Board now"
-        case .riding(let leg, _, let confirmed, let tracking):
+        case .riding(let leg, let trip, let confirmed, let tracking):
             guard let ride = ride(leg) else { return "Riding" }
-            if tracking == .lost { return "Riding · Live tracking lost · Tap I'm off at \(ride.alight.name)" }
+            if tracking == .lost { return "\(trip == nil ? "Live tracking unavailable" : "Live tracking lost") · Get off at \(ride.alight.name)" }
             return confirmed ? "Riding \(ride.route.name) · Get off at \(ride.alight.name)" : "Did you board the \(ride.route.name)?"
         case .alighting(let leg, _):
             return "Get off here at \(ride(leg)?.alight.name ?? "this stop")"
@@ -656,7 +689,7 @@ import UIKit
             announce("Get off here at \(ride.alight.name).")
         case .alighted: break
         case .trackingLost(let ride):
-            announce("I lost live tracking. Tap I'm off when you reach \(ride.alight.name).")
+            announce("Live tracking isn't available. Tap I'm off when you reach \(ride.alight.name).")
         case .awaitingSignal:
             phoneTester.stop(status: "Waiting for GPS · Head for the exit")
             announce("Head for the exit. Directions resume once GPS returns.")
@@ -718,6 +751,17 @@ import UIKit
     func preview() { playVoiceDemo() }
 
     #if DEBUG
+    func previewTransit() {
+        cancel()
+        usePhoneAsGlove = false
+        currentLocation = CLLocation(coordinate: TransitReviewFixtures.origin, altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: Date())
+        pendingJourneyPlace = PlaceCandidate(id: "review-destination", name: "Nubian Station", address: "Sample journey · Simulated arrivals",
+                                            coordinate: TransitReviewFixtures.destination)
+        journeyCandidates = [TransitReviewFixtures.plan]
+        transcript = "Sample bus journey · UI review"
+        stage = .journeyChoice
+    }
+
     func previewPointAI() {
         cancel()
         let place = PlaceCandidate(id: "voice-preview", name: "Shake Shack", address: "Preview only",
@@ -738,6 +782,17 @@ import UIKit
 
     func startJourney() {
         guard let route else { return }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--preview-transit"), let journeyPlan {
+            do { try journey.start(journeyPlan, at: currentLocation); journeyStarted = true }
+            catch { fail(error) }
+            return
+        }
+        #endif
+        controller.setOutputEnabled(true)
+        controller.useTransport(isDemo || usePhoneAsGlove ? glove : deviceConnection.glove,
+                                activate: isDemo || !usePhoneAsGlove)
+        startGloveWatchdog()
         if let journeyPlan {
             do {
                 try journey.start(journeyPlan, at: currentLocation)
@@ -746,7 +801,7 @@ import UIKit
                 locationManager.showsBackgroundLocationIndicator = true
                 locationManager.pausesLocationUpdatesAutomatically = false
                 if let currentLocation { controller.updateLocation(currentLocation); journey.updateLocation(currentLocation) }
-                if usePhoneAsGlove { startPhonePointing() }
+                if usePhoneAsGlove, isWalkingLeg, !awaitingSignal { startPhonePointing() }
                 let first = journeyPlan.rides.first.map { "Walk to \($0.board.name) first." } ?? ""
                 announce("Trip started. \(first) Hold the phone screen down to feel the direction.")
             } catch { fail(error) }
@@ -765,7 +820,7 @@ import UIKit
             if !isDemo, usePhoneAsGlove { startPhonePointing() }
             announce(isDemo ? "Demo started. Try the pointing control." : usePhoneAsGlove
                      ? "Phone pointing test started. Hold the screen down and point the camera end along your finger. Vibration gets stronger toward the beacon."
-                     : "Navigation started. The glove is not connected yet.")
+                     : "Navigation started. \(deviceConnection.firmwareMessage).")
         } catch { fail(error) }
     }
 
@@ -775,9 +830,21 @@ import UIKit
         if phoneTester.running { locationManager.startUpdatingHeading() }
     }
 
+    private func startGloveWatchdog() {
+        gloveWatchdog?.cancel()
+        guard !isDemo, !usePhoneAsGlove else { return }
+        gloveWatchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.controller.tick()
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            }
+        }
+    }
+
     func pauseJourney() {
-        guard journeyStarted, !isDemo, usePhoneAsGlove, journeyState == .navigating else { return }
+        guard journeyStarted, !isDemo, journeyState == .navigating else { return }
         controller.navigation.pause()
+        controller.tick()
         locationManager.allowsBackgroundLocationUpdates = false
         locationManager.stopUpdatingHeading()
         mapTelemetry.clearHeading()
@@ -785,10 +852,11 @@ import UIKit
     }
 
     func resumeJourney() {
-        guard journeyStarted, !isDemo, usePhoneAsGlove, journeyState == .paused else { return }
+        guard journeyStarted, !isDemo, journeyState == .paused else { return }
         controller.navigation.resume()
         locationManager.allowsBackgroundLocationUpdates = true
-        startPhonePointing()
+        if usePhoneAsGlove { startPhonePointing() }
+        else { startGloveWatchdog(); controller.tick() }
     }
 
     func setDemoAlignment(_ aligned: Bool) {
@@ -799,6 +867,8 @@ import UIKit
     }
 
     func cancel() {
+        gloveWatchdog?.cancel()
+        gloveWatchdog = nil
         locationManager.allowsBackgroundLocationUpdates = false
         locationManager.stopUpdatingHeading()
         mapTelemetry.clearHeading()
@@ -834,6 +904,9 @@ import UIKit
     }
 
     func sceneInactive() {
+        gloveWatchdog?.cancel()
+        gloveWatchdog = nil
+        controller.setOutputEnabled(false)
         stopSpokenReply()
         if let followUpPrompt { displayedReply = followUpPrompt }
         if stage == .recording || demoInFlight { cancel() }
@@ -846,7 +919,9 @@ import UIKit
     }
 
     func sceneActive() {
+        controller.setOutputEnabled(true)
         guard stage == .route, !isDemo else { return }
+        if journeyStarted { startGloveWatchdog() }
         if journeyPlan != nil {
             journey.tick() // Reconcile after a suspension: polls restart, a missed stop is noticed.
             if journeyStarted, isWalkingLeg, !awaitingSignal, journeyState == .navigating, usePhoneAsGlove { startPhonePointing() }
@@ -860,8 +935,21 @@ import UIKit
         }
     }
 
-    func openBeaconTest() {
+    func enterIndoorDemo() {
+        // End any walk/transit plan and pending confirmations before switching coordinate systems.
         cancel()
+        locationManager.stopUpdatingLocation()
+        stage = .indoorDemo
+    }
+
+    func leaveIndoorDemo() {
+        guard stage == .indoorDemo else { return }
+        cancel()
+    }
+
+    func indoorDemoInstruction(_ text: String) {
+        guard stage == .indoorDemo else { return }
+        announce(text)
     }
 
     func openDeviceSetup() {

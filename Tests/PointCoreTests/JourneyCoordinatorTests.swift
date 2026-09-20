@@ -6,6 +6,40 @@ import Testing
 @MainActor struct JourneyCoordinatorTests {
     let epoch = Date(timeIntervalSince1970: 50_000)
 
+    @Test func manualBoardingWithoutPredictionsRemainsUsable() throws {
+        let controller = PointController(glove: SimulatedGlove())
+        let coordinator = JourneyCoordinator(controller: controller, transit: FakeTransit())
+        try coordinator.start(makePlan(), now: epoch)
+        coordinator.confirmAtStop(now: epoch)
+        coordinator.confirmBoarded(now: epoch)
+        #expect(coordinator.phase == .riding(leg: 1, tripID: nil, confirmed: true, tracking: .lost))
+        #expect(controller.navigation.activeBeacon == nil)
+        coordinator.confirmAlighted(now: epoch)
+        #expect(coordinator.phase == .waitingAtStop(leg: 3))
+        coordinator.stop()
+    }
+
+    @Test func pollingContinuesAfterArrivalAndManualBoarding() async throws {
+        let transit = FakeTransit()
+        transit.arrivalsQueue = [
+            [arrival("trip-A", status: .stoppedAt, platform: "r-kendall-s")],
+            [arrival("trip-A", status: .inTransitTo, platform: "r-charles-s")]
+        ]
+        let coordinator = JourneyCoordinator(controller: PointController(glove: SimulatedGlove()), transit: transit,
+                                             pollInterval: .milliseconds(10))
+        coordinator.cueArrivalsWhileWalking = false
+        try coordinator.start(makePlan())
+        coordinator.confirmAtStop()
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(transit.arrivalsQueue.isEmpty)
+        #expect(coordinator.phase.isRiding)
+        coordinator.confirmBoarded()
+        // Three missing vehicles should reach lost tracking through the actual polling loop.
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(coordinator.phase == .riding(leg: 1, tripID: "trip-A", confirmed: true, tracking: .lost))
+        coordinator.stop()
+    }
+
     /// Walk (stub, 2 checkpoints) → Red Kendall→Park St → transfer → Green Park St→Copley → walk.
     func makePlan() -> JourneyPlan {
         let origin = FakeTransit.point(8, -0.0003)
@@ -145,7 +179,12 @@ import Testing
         let glove = SimulatedGlove(); glove.connect()
         let coordinator = JourneyCoordinator(controller: PointController(glove: glove), transit: FakeTransit(), pollInterval: .seconds(60))
         var events: [JourneyCoordinator.Event] = []
-        coordinator.onEvent = { events.append($0) }
+        coordinator.onEvent = {
+            events.append($0)
+            if case .walkingLegStarted(2, _) = $0 {
+                #expect(coordinator.awaitingSignal) // UI must see the hold before announcing a walking leg.
+            }
+        }
         // A two-leg plan: walk → Green Park St→Copley → walk, alighting with no GPS for minutes.
         let park = FakeTransit.stations[3], copley = FakeTransit.stations[8]
         let walk1 = TransitPlanner.stubWalk(from: FakeTransit.point(16, -0.0002), to: park.coordinate, name: park.name)
