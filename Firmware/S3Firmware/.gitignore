@@ -1,0 +1,3 @@
+.pio/
+sdkconfig.local*
+managed_components/

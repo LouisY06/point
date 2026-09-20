@@ -30,12 +30,20 @@ import Testing
         coordinator.cueArrivalsWhileWalking = false
         try coordinator.start(makePlan())
         coordinator.confirmAtStop()
-        try await Task.sleep(for: .milliseconds(60))
+        // Wait for the observable transition, not a 60 ms wall-clock guess when
+        // the main actor is also running other suites.
+        for _ in 0..<100 {
+            if transit.arrivalsQueue.isEmpty && coordinator.phase.isRiding { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(transit.arrivalsQueue.isEmpty)
         #expect(coordinator.phase.isRiding)
         coordinator.confirmBoarded()
         // Three missing vehicles should reach lost tracking through the actual polling loop.
-        try await Task.sleep(for: .milliseconds(80))
+        for _ in 0..<100 {
+            if coordinator.phase == .riding(leg: 1, tripID: "trip-A", confirmed: true, tracking: .lost) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(coordinator.phase == .riding(leg: 1, tripID: "trip-A", confirmed: true, tracking: .lost))
         coordinator.stop()
     }
@@ -92,11 +100,14 @@ import Testing
         #expect(coordinator.countdown?.secondsAway == 110 && coordinator.countdown?.headsign == "Ashmont")
         #expect(!glove.commands.contains(.vehicleArrived))
 
-        coordinator.handleArrivals([arrival("trip-A", pattern: "Red-3-0", status: .stoppedAt, platform: "r-kendall-s")], now: epoch.addingTimeInterval(20))
+        coordinator.handleArrivals([arrival("trip-A", pattern: "Red-3-0", status: .incomingAt, platform: "r-kendall-s")], now: epoch.addingTimeInterval(20))
         #expect(coordinator.phase == .vehicleArriving(leg: 1, tripID: "trip-A"))
         #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 1)
         coordinator.handleArrivals([arrival("trip-A", pattern: "Red-3-0", status: .stoppedAt, platform: "r-kendall-s")], now: epoch.addingTimeInterval(25))
-        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 1) // Same trip/status cues once.
+        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 1) // Approaching → stopped is one arrival.
+        coordinator.handleArrivals([arrival("trip-A", pattern: "Red-3-0", status: .stoppedAt, platform: "r-kendall-s")], now: epoch.addingTimeInterval(30))
+        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 1)
+        #expect(events.filter { $0 == .vehicleArriving(plan.rides[0]) }.count == 1)
 
         // The train leaves toward Charles: tentative boarding until confirmed.
         coordinator.handleArrivals([arrival("trip-A", pattern: "Red-3-0", status: .inTransitTo, platform: "r-charles-s")], now: epoch.addingTimeInterval(40))
@@ -241,6 +252,10 @@ import Testing
         let green = TransitArrival(tripID: "trip-G", patternID: "Green-B-0", headsign: "Boston College", time: nil, status: nil,
                                    vehicle: VehicleStatus(vehicleID: "G", status: .incomingAt, platformStopID: "g-park-w", coordinate: nil, updatedAt: epoch))
         coordinator.handleTestArrivals([green], ride: plan.rides[1], now: epoch.addingTimeInterval(70))
+        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 3)
+        let stoppedGreen = TransitArrival(tripID: "trip-G", patternID: "Green-B-0", headsign: "Boston College", time: nil, status: nil,
+                                         vehicle: VehicleStatus(vehicleID: "G", status: .stoppedAt, platformStopID: "g-park-w", coordinate: nil, updatedAt: epoch))
+        coordinator.handleTestArrivals([stoppedGreen], ride: plan.rides[1], now: epoch.addingTimeInterval(80))
         #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 3)
         #expect(coordinator.phase == .walking(leg: 0))
         #expect(events.contains(.vehicleArriving(plan.rides[1])))

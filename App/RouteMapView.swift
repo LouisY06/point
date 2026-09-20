@@ -7,12 +7,11 @@ import SwiftUI
     @Published private(set) var heading: HeadingReading?
     private var lastPublished = -Double.infinity
 
-    func receive(_ value: CLHeading) {
+    func receive(_ value: HeadingReading) {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastPublished >= 0.1 else { return } // Display at 10 Hz; haptics receive every sample.
         lastPublished = now
-        heading = HeadingReading(degrees: value.trueHeading, accuracyDegrees: value.headingAccuracy,
-                                 timestamp: value.timestamp, reference: .trueNorth)
+        heading = value
     }
 
     func clearHeading() { heading = nil; lastPublished = -.infinity }
@@ -112,8 +111,8 @@ struct RouteMapView: View {
     var body: some View {
         Map(position: $position) {
             if let location = markerLocation, location.horizontalAccuracy >= 0, location.horizontalAccuracy <= 25 {
-                Annotation("Your pointing direction", coordinate: location.coordinate, anchor: .center) {
-                    PhoneDirectionAnnotation(telemetry: telemetry, location: location, mapHeading: mapHeading)
+                Annotation("Glove pointing direction", coordinate: location.coordinate, anchor: .center) {
+                    GloveDirectionAnnotation(telemetry: telemetry, location: location, mapHeading: mapHeading)
                 }
             } else { UserAnnotation() }
             // Every other walking leg, with its beacons in the normal style, faded once passed.
@@ -220,7 +219,7 @@ extension Color {
 }
 
 /// Only this small marker has a freshness timer; route lines and all other markers stay unchanged.
-private struct PhoneDirectionAnnotation: View {
+private struct GloveDirectionAnnotation: View {
     @ObservedObject var telemetry: RouteMapTelemetry
     let location: CLLocation
     let mapHeading: Double
@@ -237,11 +236,11 @@ private struct PhoneDirectionAnnotation: View {
                     .padding(9).background(.black.opacity(0.8), in: Circle())
                     .overlay(Circle().stroke(.white, lineWidth: 2))
                     .rotationEffect(.degrees(heading.degrees - mapHeading))
-                    .accessibilityLabel("Phone points \(Int(heading.degrees)) degrees from north")
+                    .accessibilityLabel("Glove points \(Int(heading.degrees)) degrees from north")
             } else {
                 Circle().fill(freshLocation ? Color.cyan : Color.gray).frame(width: 18, height: 18)
                     .overlay(Circle().stroke(.white, lineWidth: 3))
-                    .accessibilityLabel(freshLocation ? "Your location. Waiting for compass" : "Last known location. Waiting for GPS")
+                    .accessibilityLabel(freshLocation ? "Your location. Waiting for calibrated glove direction" : "Last known location. Waiting for GPS")
             }
         }
     }

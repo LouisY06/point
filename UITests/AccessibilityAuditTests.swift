@@ -79,9 +79,39 @@ final class AccessibilityAuditTests: XCTestCase {
         launch("--test-beacons")
         XCTAssertTrue(app.staticTexts["Indoor demo"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Exit demo"].exists)
-        XCTAssertTrue(app.buttons["Demo help"].exists)
+        XCTAssertTrue(app.buttons["Demo options"].exists)
         assertEveryControlIsLabeled()
         try audit("beacon test")
+    }
+
+    func testPocketDemoControlsAreLabeled() throws {
+        launch("--demo-mode", "--preview-pocket-ui")
+        XCTAssertTrue(app.staticTexts["Demo layout preview"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Pause"].exists)
+        XCTAssertTrue(app.buttons["End pointing test"].exists)
+        XCTAssertFalse(app.buttons["Next beacon"].exists)
+        XCTAssertTrue(app.staticTexts["Stay in the same spot"].exists)
+        assertEveryControlIsLabeled()
+        try audit("pocket demo layout preview")
+    }
+
+    func testSingleBeaconPlacementStopsAfterOne() throws {
+        launch("--demo-mode", "--preview-indoor-ui")
+        XCTAssertTrue(app.buttons["Start pointing test"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Place 2"].exists)
+        XCTAssertFalse(app.buttons["Next beacon"].exists)
+        assertEveryControlIsLabeled()
+        try audit("single beacon placement")
+    }
+
+    func testPocketGuardHidesUnderlyingControls() throws {
+        launch("--demo-mode", "--preview-pocket-ui", "--preview-pocket-guard")
+        let guardText = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Pocket touch guard'")).firstMatch
+        XCTAssertTrue(guardText.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Exit demo"].isHittable)
+        XCTAssertFalse(app.buttons["Pause"].isHittable)
+        guardText.press(forDuration: 2.2)
+        XCTAssertTrue(app.buttons["Exit demo"].waitForExistence(timeout: 5))
     }
 
     // MARK: Helpers
