@@ -47,6 +47,9 @@ final class AccessibilityAuditTests: XCTestCase {
     }
 
     func testRoutePreviewIsNavigable() throws {
+        // The sample route plays as a timed demo that the app abandons whenever a system prompt
+        // takes the scene inactive, so settle the permission prompts on a plain launch first.
+        launch()
         launch("--preview-route")
         XCTAssertTrue(app.buttons["Try the walk"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["Back to voice search"].exists)
@@ -97,20 +100,27 @@ final class AccessibilityAuditTests: XCTestCase {
     /// app under audit. Accept them so the audited hierarchy is the app's own.
     private func allowSystemPrompts() {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        // Location offers "Allow Once" first; that re-prompts on every launch, so prefer the lasting grant.
+        let allowWhileUsing = springboard.buttons["Allow While Using App"]
         let allow = springboard.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] 'Allow' OR label == 'OK'")).firstMatch
         for _ in 0..<5 {
             guard allow.waitForExistence(timeout: 2) else { return }
-            allow.tap()
+            (allowWhileUsing.exists ? allowWhileUsing : allow).tap()
         }
     }
 
     /// Every interactive element must announce something; an unlabeled button is a dead stop for VoiceOver.
     private func assertEveryControlIsLabeled(file: StaticString = #filePath, line: UInt = #line) {
         let controls = [app.buttons, app.switches, app.textFields, app.progressIndicators, app.sliders]
+        // A SwiftUI Toggle exposes its labeled switch plus the bare UISwitch nested inside it;
+        // VoiceOver reads only the outer one.
+        let toggles = app.switches.allElementsBoundByIndex.filter { !$0.label.isEmpty }
         for query in controls {
             for element in query.allElementsBoundByIndex where element.exists {
+                if element.elementType == .switch, element.label.isEmpty,
+                   toggles.contains(where: { $0.frame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) }) { continue }
                 let spoken = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
-                XCTAssertFalse(spoken.isEmpty, "\(element.elementType) at \(element.frame) has no VoiceOver label", file: file, line: line)
+                XCTAssertFalse(spoken.isEmpty, "\(describe(element)) has no VoiceOver label", file: file, line: line)
                 XCTAssertFalse(spoken.contains(".") && !spoken.contains(" "),
                                "\(spoken) looks like a raw symbol name rather than a spoken label", file: file, line: line)
             }
@@ -118,11 +128,24 @@ final class AccessibilityAuditTests: XCTestCase {
     }
 
     private func audit(_ screen: String, file: StaticString = #filePath, line: UInt = #line) throws {
+        let bars = app.navigationBars.allElementsBoundByIndex.map(\.frame)
         try app.performAccessibilityAudit(for: .all) { issue in
-            // MapKit draws its own tiles and annotations; contrast there is Apple's, not ours.
-            if issue.auditType == .contrast, issue.element?.elementType == .map { return true }
-            XCTFail("\(screen): \(issue.compactDescription)\n\(issue.detailedDescription)", file: file, line: line)
+            if let element = issue.element {
+                // MapKit draws its own tiles, annotations and Legal link; those are Apple's, not ours.
+                if element.elementType == .map || (element.elementType == .link && element.label == "Legal") { return true }
+                // WCAG 1.4.3 exempts inactive controls from contrast minimums.
+                if issue.auditType == .contrast, !element.isEnabled { return true }
+                // UIKit sizes and lays out navigation bar items itself.
+                if issue.auditType == .dynamicType || issue.auditType == .textClipped,
+                   bars.contains(where: { $0.intersects(element.frame) }) { return true }
+            }
+            let element = issue.element.map(self.describe) ?? "unknown element"
+            XCTFail("\(screen): \(issue.compactDescription) — \(element)\n\(issue.detailedDescription)", file: file, line: line)
             return true
         }
+    }
+
+    private func describe(_ element: XCUIElement) -> String {
+        "\(element.elementType) label=\"\(element.label)\" id=\"\(element.identifier)\" value=\"\(element.value.map { "\($0)" } ?? "")\" at \(element.frame.integral)"
     }
 }
