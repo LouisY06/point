@@ -152,7 +152,8 @@ private struct PointHomeContent: View {
                         declineTitle: model.pendingTransitOffer ? "I'll walk" : "Change destination",
                         onConfirm: { model.confirmDestination() },
                         onDecline: { model.declineDestination() },
-                        onSpeak: { model.holdMicrophone() },
+                        onSpeak: { model.armMicrophone() },
+                        onHold: { model.holdMicrophone() },
                         onFinish: { model.releaseMicrophone() },
                         onToggle: { model.microphone() },
                         onCancel: { model.cancel() },
@@ -166,6 +167,8 @@ private struct PointHomeContent: View {
             }
             .scrollIndicators(.hidden)
             .scrollBounceBehavior(.basedOnSize, axes: .vertical)
+            // With the talk panel up, a scroll view would delay and sometimes cancel the panel's press.
+            .scrollDisabled(model.stage != .home)
         }
     }
 

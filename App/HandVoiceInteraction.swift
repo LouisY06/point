@@ -14,11 +14,13 @@ struct HandVoiceInteraction: View {
     var declineTitle = "Change destination"
     let onConfirm: () -> Void
     let onDecline: () -> Void
-    /// Finger down on the microphone.
+    /// Tap on the hand: bring the talk panel up.
     let onSpeak: () -> Void
-    /// Finger lifted: the recording ends here, not on a pause.
+    /// Finger down on the talk panel: the microphone opens.
+    let onHold: () -> Void
+    /// Finger lifted from the panel: the recording ends here, not on a pause.
     let onFinish: () -> Void
-    /// VoiceOver activation: one tap starts, another finishes.
+    /// VoiceOver activation of the panel: one tap starts, another finishes.
     let onToggle: () -> Void
     let onCancel: () -> Void
     let onType: () -> Void
@@ -45,31 +47,36 @@ struct HandVoiceInteraction: View {
                                    prompt == nil ? transcriptSize * (dynamicType.isAccessibilitySize ? 5.5 : 3.8) : questionSize * 8 + 96)
             let panelShape = RoundedRectangle(cornerRadius: HandMotionTiming.bannerRadius * scale, style: .circular)
             ZStack(alignment: .topLeading) {
-                listeningBanner
-                    .frame(width: panel.width * scale, height: bannerHeight)
-                    .background(Color(red: 0.055, green: 0.063, blue: 0.068), in: panelShape)
-                    .overlay(panelShape.strokeBorder(.white.opacity(0.14), lineWidth: 0.75))
-                    .clipShape(panelShape)
-                    .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 8)
-                    .offset(x: simpleMotion ? panel.minX * scale : (bannerEdge - panel.width) * scale,
-                            y: panel.minY * scale)
-                    .opacity(active && (motion.seconds > 0.78 || motion.finished) ? 1 : 0)
-                    .allowsHitTesting(active && motion.finished)
-                    .accessibilityHidden(!active || !motion.finished)
-
-                // Hold to talk: the button stays under the finger while the hand animation plays over it.
+                // The panel is the push-to-talk surface: hold it to speak, let go to send. It sinks
+                // while pressed so the hold is visibly acknowledged.
                 Button(action: onToggle) {
+                    listeningBanner
+                        .frame(width: panel.width * scale, height: bannerHeight)
+                        .contentShape(panelShape)
+                }
+                // Holdable at any time: pressing while Point is speaking or searching interrupts it.
+                .buttonStyle(TalkPanelStyle(shape: panelShape, listening: listening, canHold: !isDemo,
+                                            onPress: onHold, onRelease: onFinish))
+                .offset(x: simpleMotion ? panel.minX * scale : (bannerEdge - panel.width) * scale,
+                        y: panel.minY * scale)
+                .opacity(active && (motion.seconds > 0.78 || motion.finished) ? 1 : 0)
+                .allowsHitTesting(active && (motion.seconds > 0.78 || motion.finished)) // Holdable as soon as it is visible.
+                .accessibilityHidden(!active || !motion.finished)
+                .accessibilityLabel(prompt ?? (transcript.isEmpty ? "Where to?" : transcript))
+                .accessibilityHint(searching ? "" : listening ? "Double-tap to finish" : "Double-tap to speak, double-tap again to finish, or pause.")
+
+                Button(action: onSpeak) {
                     GloveOutline()
                         .frame(width: posterRect.width * scale, height: posterRect.height * scale)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(HoldToTalkStyle(onPress: onSpeak, onRelease: onFinish))
+                .buttonStyle(.plain)
                 .position(x: posterRect.midX * scale, y: posterRect.midY * scale)
                 .opacity(!active || (!motion.frameReady && !motion.finished) ? 1 : 0)
-                .allowsHitTesting(!active || listening)
+                .allowsHitTesting(!active)
                 .accessibilityHidden(active)
                 .accessibilityLabel("Speak to Point")
-                .accessibilityHint("Say a destination or enter demo mode. Double-tap again to finish, or pause.")
+                .accessibilityHint("Opens the talk panel. Hold the panel while you speak, then let go.")
 
                 if let displayedFrame, active {
                     Image(decorative: displayedFrame.image, scale: 1)
@@ -98,18 +105,19 @@ struct HandVoiceInteraction: View {
                             Text("Let go when you're done").font(.subheadline).frame(minHeight: 48)
                                 .foregroundStyle(.white.opacity(0.8)).accessibilityHidden(true)
                         } else if prompt != nil {
+                            // VoiceOver's reply control; sighted users hold the panel itself.
                             Button(action: onToggle) {
-                                Label("Hold to reply", systemImage: "mic.fill").frame(minHeight: 48)
+                                Label("Reply", systemImage: "mic.fill").frame(minHeight: 48)
                             }
-                            .buttonStyle(HoldToTalkStyle(onPress: onSpeak, onRelease: onFinish))
-                            .accessibilityLabel("Reply")
+                            .buttonStyle(HoldToTalkStyle(onPress: onHold, onRelease: onFinish))
                             .accessibilityHint("Speak an answer or a different destination. Double-tap again to finish, or pause.")
                         } else if !isDemo && !searching {
-                            Button("Finish", action: onFinish).frame(minHeight: 48)
+                            Text("Hold the panel and speak").font(.subheadline).frame(minHeight: 48)
+                                .foregroundStyle(.white.opacity(0.8)).accessibilityHidden(true)
                         }
                         Button(role: .cancel, action: onCancel) { Text("Cancel").frame(minHeight: 48) }
                     } else {
-                        Text("Hold to speak").font(.subheadline).foregroundStyle(.white.opacity(0.8))
+                        Text("Tap to speak").font(.subheadline).foregroundStyle(.white.opacity(0.8))
                             .accessibilityHidden(true)
                     }
                     }
@@ -169,7 +177,7 @@ struct HandVoiceInteraction: View {
                     VoiceActivity(searching: searching, quiet: simpleMotion || (!listening && !searching))
                         .frame(width: 22, height: 18)
                         .accessibilityHidden(true)
-                    Text(searching ? "Finding your route" : "Listening")
+                    Text(searching ? "Finding your route" : listening ? "Listening" : "Hold to talk")
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(.white.opacity(0.68))
                 }
@@ -190,6 +198,8 @@ struct HandVoiceInteraction: View {
                     }
                 }
                 .scrollIndicators(.hidden)
+                // Scrolling is programmatic only; a live scroll view here would eat the panel's press.
+                .allowsHitTesting(false)
                 .onChange(of: transcript) { _, _ in scroll.scrollTo("utterance-end", anchor: .bottom) }
                 .onChange(of: spokenReply) { _, _ in if prompt != nil { scroll.scrollTo("utterance-end", anchor: .bottom) } }
                 .onChange(of: prompt) { _, _ in
@@ -201,6 +211,30 @@ struct HandVoiceInteraction: View {
         .padding(.horizontal, 28)
         .padding(.vertical, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+}
+
+/// The talk panel: sinks and brightens while held, and the hold is the recording.
+struct TalkPanelStyle: ButtonStyle {
+    let shape: RoundedRectangle
+    let listening: Bool
+    let canHold: Bool
+    let onPress: () -> Void
+    let onRelease: () -> Void
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed && canHold
+        configuration.label
+            .background(Color(red: pressed ? 0.11 : 0.055, green: pressed ? 0.12 : 0.063, blue: pressed ? 0.13 : 0.068), in: shape)
+            .overlay(shape.strokeBorder(pressed || listening ? PointTheme.accent.opacity(0.9) : .white.opacity(0.14), lineWidth: pressed || listening ? 2 : 0.75))
+            .clipShape(shape)
+            .shadow(color: .black.opacity(pressed ? 0.05 : 0.18), radius: pressed ? 4 : 14, x: 0, y: pressed ? 2 : 8)
+            .scaleEffect(pressed ? 0.965 : 1)
+            .animation(.easeOut(duration: 0.12), value: pressed)
+            .onChange(of: configuration.isPressed) { _, down in
+                guard canHold, !UIAccessibility.isVoiceOverRunning else { return }
+                if down { onPress() } else { onRelease() }
+            }
     }
 }
 

@@ -14,7 +14,7 @@ Use `PointTheme.action` for standalone controls: light gold OKLCH(0.80 0.12 80) 
 
 ## Typography and layout
 
-SF Pro semantic styles. The home title is a quiet 36-point display moment, using a scaled metric. All other text uses system styles. Horizontal inset 28 points, touch targets at least 48. The microphone is 56 points and sits inside a compact native hand outline. The only home text is the wordmark, “Where to?”, “Hold to speak”, and a small Preview action. Route controls form one bottom surface, not a dashboard.
+SF Pro semantic styles. The home title is a quiet 36-point display moment, using a scaled metric. All other text uses system styles. Horizontal inset 28 points, touch targets at least 48. The microphone is 56 points and sits inside a compact native hand outline. The only home text is the wordmark, “Where to?”, “Tap to speak”, and a small Preview action. Tapping the hand raises the talk panel; holding the panel records, and letting go sends. Route controls form one bottom surface, not a dashboard.
 
 ## Motion
 

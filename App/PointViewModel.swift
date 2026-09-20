@@ -6,7 +6,8 @@ import SwiftUI
 import UIKit
 
 @MainActor final class PointViewModel: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
-    enum Stage { case home, recording, searching, clarifying, choosing, journeyChoice, route, indoorDemo }
+    /// `armed`: the hand was tapped and the talk panel is up, but the microphone opens only while the panel is held.
+    enum Stage { case home, armed, recording, searching, clarifying, choosing, journeyChoice, route, indoorDemo }
     @Published var stage: Stage = .home
     @Published var transcript = ""
     @Published var candidates: [PlaceCandidate] = []
@@ -233,7 +234,17 @@ import UIKit
         startListening(automatically: false, holdToTalk: false)
     }
 
-    /// Finger down on the microphone: record until `releaseMicrophone`, however long the pauses.
+    /// Tap on the hand: bring up the talk panel without opening the microphone yet.
+    func armMicrophone() {
+        guard !demoInFlight, stage == .home, UIApplication.shared.applicationState == .active else { return }
+        work?.cancel()
+        stopSpokenReply()
+        transcript = ""
+        stage = .armed
+        UIAccessibility.post(notification: .announcement, argument: "Hold the panel while you speak, then let go.")
+    }
+
+    /// Finger down on the talk panel: record until `releaseMicrophone`, however long the pauses.
     func holdMicrophone() {
         guard stage != .recording else { return }
         microphoneHeld = true
@@ -249,7 +260,8 @@ import UIKit
     private func startListening(automatically: Bool, holdToTalk: Bool) {
         guard !demoInFlight, UIApplication.shared.applicationState == .active else { return }
         if stage == .recording { finishRecording(); return }
-        guard stage != .searching else { return }
+        // A hold interrupts a search in flight (and, via stopSpokenReply, whatever Point is saying).
+        guard stage != .searching || holdToTalk else { return }
         work?.cancel()
         stopSpokenReply()
         transcript = ""
