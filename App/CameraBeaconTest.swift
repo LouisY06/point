@@ -135,7 +135,8 @@ import SwiftUI
         }
         view.session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
         sessionRunning = true
-        logEvent("Room session reset; alignment cleared")
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        logEvent("Build \(build); room session reset; alignment cleared")
         loop?.cancel()
         loop = Task { [weak self] in
             while !Task.isCancelled {
@@ -926,6 +927,7 @@ struct CameraBeaconTestView: View {
     let onInstruction: (String) -> Void
     @StateObject private var model = CameraBeaconTestModel()
     @State private var showHelp = false
+    @State private var showOptions = false
     @State private var showGloveSetup = false
     @State private var showOrientationLogs = false
     @Environment(\.dismiss) private var dismiss
@@ -945,14 +947,14 @@ struct CameraBeaconTestView: View {
                 if model.pocketActive {
                     Color.black
                     VStack(spacing: 20) {
-                        Image(systemName: "figure.walk").font(.system(size: 52)).foregroundStyle(PointTheme.action)
+                        Image(systemName: "figure.walk").font(.system(size: 52)).foregroundStyle(PointTheme.action).accessibilityHidden(true)
                         Text(model.pocketPreparing ? "Pocket your phone" : "Pocket test").font(.title2.weight(.semibold))
                         Text(model.pocketPreparing ? (model.pocketCountdown > 0 ? "\(model.pocketCountdown)" : "Hold still…")
-                             : "\(model.pocketSteps) steps estimated").font(.title3.monospacedDigit())
+                             : "\(model.pocketSteps) steps estimated").font(.title3.monospacedDigit()).fixedSize(horizontal: false, vertical: true)
                         Text(model.pocketPreparing ? "Face beacon 1 and stay in place. Wait for ‘ready’."
                              : model.lockScreenReady ? "Camera off · Lock-screen test enabled."
                              : "Camera off · Touch guard available.")
-                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     }.padding(28)
                 }
             }
@@ -961,12 +963,14 @@ struct CameraBeaconTestView: View {
             panel
         }
         .background(PointTheme.background)
+        .allowsHitTesting(!model.touchProtected)
+        .accessibilityHidden(model.touchProtected)
         .overlay {
             if model.touchProtected {
                 ZStack {
                     Color.black.ignoresSafeArea()
                     VStack(spacing: 18) {
-                        Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(PointTheme.action)
+                        Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(PointTheme.action).accessibilityHidden(true)
                         Text("Pocket touch guard").font(.title2.weight(.semibold))
                         Text(model.pocketPreparing ? "Face beacon 1 · Stay still · \(model.pocketCountdown)"
                              : model.lockScreenReady ? "You can lock the screen." : "Keep Point open.").foregroundStyle(.secondary)
@@ -1014,27 +1018,27 @@ struct CameraBeaconTestView: View {
     private var header: some View {
         HStack(spacing: 16) {
             Text(model.isLayoutPreview ? "Demo layout preview" : "Indoor demo")
-                .font(.headline).accessibilityAddTraits(.isHeader)
+                .font(.headline).fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
             Spacer(minLength: 8)
-            Menu {
-                Button("Orientation logs", systemImage: "waveform.path.ecg") { showOrientationLogs = true }
-                Button("Glove setup", systemImage: "hand.point.up") { model.pauseTest(); showGloveSetup = true }
-                Button("Demo settings", systemImage: "slider.horizontal.3") { showHelp = true }
+            Button { showOptions = true } label: {
+                Label("Demo options", systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly).font(.title3).frame(width: 44, height: 44)
+            }.accessibilityLabel("Demo options")
+            .confirmationDialog("Demo options", isPresented: $showOptions, titleVisibility: .hidden) {
+                Button("Orientation logs") { showOrientationLogs = true }
+                Button("Glove setup") { model.pauseTest(); showGloveSetup = true }
+                Button("Demo settings") { showHelp = true }
                 if model.pocketActive {
-                    Button("Protect from pocket touches", systemImage: "lock.fill") { model.touchProtected = true }
+                    Button("Protect from pocket touches") { model.touchProtected = true }
                 }
                 if model.beaconCount > 0 {
                     Button("Clear beacons", role: .destructive) { model.resetDemo() }
                 }
-            } label: {
-                Image(systemName: "ellipsis.circle").font(.title3).frame(width: 44, height: 44)
-            }.accessibilityLabel("Demo options")
-            Button("Done") { model.close(); dismiss() }
-                .font(.body.weight(.semibold)).frame(minWidth: 44, minHeight: 44)
-                .accessibilityLabel("Exit demo")
+            }
+            Button { model.close(); dismiss() } label: {
+                Text("Done").font(.body.weight(.semibold)).fixedSize().frame(minWidth: 44, minHeight: 44)
+            }.accessibilityLabel("Exit demo")
         }
-        // Navigation chrome stays compact; instructions and actions below retain full Dynamic Type.
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .padding(.horizontal, 24).padding(.vertical, 6)
         .background(PointTheme.background)
     }
@@ -1042,19 +1046,24 @@ struct CameraBeaconTestView: View {
     private var panel: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !model.cameraAllowed {
-                Text(model.message).font(.subheadline).foregroundStyle(.secondary)
+                Text(model.message).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 primaryButton("Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                 }
             } else if model.testing {
                 HStack {
                     Text("Beacon \(model.activeIndex + 1) of \(model.beaconCount)").font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer()
-                    if let distance = model.distance { Text("\(model.pocketActive ? "≈ " : "")\(distance, specifier: "%.1f") m").monospacedDigit() }
-                    Button("Pause") { model.pauseTest() }.frame(minHeight: 44)
+                    Button { model.pauseTest() } label: { Text("Pause").frame(minHeight: 44) }
+                }
+                if let distance = model.distance {
+                    Text("\(model.pocketActive ? "≈ " : "")\(distance, specifier: "%.1f") m").monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(Text("\(model.pocketActive ? "Approximately " : "")\(distance, specifier: "%.1f") meters away"))
                 }
                 Text(model.pocketActive ? model.message : model.trackingReady ? "Keep the camera uncovered while walking." : model.message)
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.pocketActive, !model.pocketPreparing {
                     if model.pocketScanAllBeacons {
                         Button("End pocket test") { model.finishPocketTest() }.frame(minHeight: 44)
@@ -1088,11 +1097,15 @@ struct CameraBeaconTestView: View {
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
         .background(PointTheme.background)
     }
 
     private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Text(title).frame(maxWidth: .infinity) }
+        Button(action: action) {
+            Text(title).fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 10).frame(maxWidth: .infinity)
+        }
             .buttonStyle(PointFilledButtonStyle())
     }
 

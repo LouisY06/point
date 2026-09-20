@@ -144,6 +144,34 @@ public struct JourneyPlan: Identifiable {
     public var rides: [RideLeg] { legs.compactMap { if case .ride(let ride) = $0 { return ride } else { return nil } } }
     public var isWalkingOnly: Bool { rides.isEmpty }
     public var firstWalk: RoutePlan? { if case .walk(let plan)? = legs.first { return plan } else { return nil } }
+
+    /// Door-to-door estimate: Apple's walking times plus a typical wait and per-stop time for each ride.
+    /// Live arrivals are not consulted, so this ranks plans rather than promising an arrival time.
+    public var estimatedSeconds: TimeInterval {
+        legs.reduce(0) { total, leg in
+            switch leg {
+            case .walk(let plan): return total + (plan.expectedTravelTime ?? (plan.checkpoints.last?.distanceFromStartMeters ?? 0) / TravelEstimate.walkingMetersPerSecond)
+            case .ride(let ride): return total + TravelEstimate.rideSeconds(stops: ride.stopsRidden, isBus: ride.route.isBus)
+            case .transfer: return total + TravelEstimate.transferSeconds
+            }
+        }
+    }
+}
+
+/// Typical MBTA timings used to compare plans before any live data is fetched.
+public enum TravelEstimate {
+    public static let walkingMetersPerSecond = 1.3
+    /// Average wait for the first vehicle: about half a headway.
+    public static let railWaitSeconds: TimeInterval = 240
+    public static let busWaitSeconds: TimeInterval = 420
+    public static let railSecondsPerStop: TimeInterval = 100
+    public static let busSecondsPerStop: TimeInterval = 80
+    /// Moving between platforms at the same station.
+    public static let transferSeconds: TimeInterval = 90
+
+    public static func rideSeconds(stops: Int, isBus: Bool) -> TimeInterval {
+        (isBus ? busWaitSeconds : railWaitSeconds) + Double(stops) * (isBus ? busSecondsPerStop : railSecondsPerStop)
+    }
 }
 
 public struct VehicleStatus: Equatable {

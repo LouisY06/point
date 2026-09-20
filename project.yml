@@ -25,7 +25,6 @@ targets:
         embed: true
     settings:
       base:
-        DEVELOPMENT_TEAM: YSN2XT3872
         PRODUCT_BUNDLE_IDENTIFIER: com.point.navigator
         SWIFT_VERSION: "5.0"
         GENERATE_INFOPLIST_FILE: YES
@@ -56,7 +55,6 @@ targets:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
-        DEVELOPMENT_TEAM: YSN2XT3872
         PRODUCT_BUNDLE_IDENTIFIER: com.point.navigator.pocket
         SWIFT_VERSION: "5.0"
         GENERATE_INFOPLIST_FILE: YES
@@ -64,10 +62,24 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
+  PointUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: Point
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.point.navigator.uitests
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   Point:
     build:
       targets:
         Point: all
+        PointUITests: [test]
     run:
       config: Debug
+    test:
+      targets: [PointUITests]

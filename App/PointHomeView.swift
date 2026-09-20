@@ -25,7 +25,7 @@ private struct PointHomeContent: View {
     @State private var voiceCenter = CGPoint.zero
     @FocusState private var typingFocused: Bool
 
-    private var recording: Bool { model.isListening }
+    private var recording: Bool { model.stage == .recording }
     private var searching: Bool { model.stage == .searching }
     private var transitionAnimation: Animation { .timingCurve(0.16, 1, 0.3, 1, duration: 0.72) }
 
@@ -67,7 +67,6 @@ private struct PointHomeContent: View {
             .coordinateSpace(name: "screen")
         }
         .tint(PointTheme.action)
-        .accessibilityAction(.magicTap) { model.microphone() }
         .onChange(of: model.stage) { _, stage in
             withAnimation(reduceMotion ? .easeOut(duration: 0.18) : transitionAnimation) {
                 reveal = stage == .route ? 1 : 0
@@ -102,12 +101,10 @@ private struct PointHomeContent: View {
         }
         .task {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--verify-voice-audio") {
-                await model.verifyVoiceAudioLifecycle()
-                return
-            }
             if ProcessInfo.processInfo.arguments.contains("--preview-transit") { return }
             if ProcessInfo.processInfo.arguments.contains("--preview-point-ai") || ProcessInfo.processInfo.arguments.contains("--demo-mode") { return }
+            // The route preview runs the scripted voice demo; permission prompts would cover it and stall the demo.
+            if ProcessInfo.processInfo.arguments.contains("--preview-route") { return }
             #endif
             // Microphone, speech, location, then Bluetooth: iOS queues the prompts in order.
             await model.requestPermissions()
@@ -122,7 +119,6 @@ private struct PointHomeContent: View {
                 Spacer()
                 deviceSetupButton
             }
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .padding(.top, 14)
             .padding(.horizontal, 28)
             .frame(maxWidth: 520)
@@ -145,21 +141,21 @@ private struct PointHomeContent: View {
                     HandVoiceInteraction(
                         active: model.stage != .home,
                         listening: recording,
-                        searching: model.voicePhase == .thinking || searching,
-                        speaking: model.voicePhase == .speaking,
-                        voiceStatus: model.voiceStatus,
+                        searching: searching,
                         transcript: model.transcript,
                         isDemo: model.isDemo,
-                        prompt: model.voicePhase == .speaking ? (model.followUpPrompt ?? model.displayedReply) : model.stage == .clarifying ? model.followUpPrompt : nil,
+                        prompt: model.stage == .clarifying || (recording && model.transcript.isEmpty) ? model.followUpPrompt : nil,
                         spokenReply: model.displayedReply,
                         needsConfirmation: model.needsConfirmation,
                         confirmTitle: model.pendingTransitOffer ? "Take the T or bus" : "Yes, that's right",
                         declineTitle: model.pendingTransitOffer ? "I'll walk" : "Change destination",
                         onConfirm: { model.confirmDestination() },
                         onDecline: { model.declineDestination() },
-                        onSpeak: { model.microphone() },
-                        onFinish: { model.microphone() },
-                        onCancel: { model.endConversation() },
+                        onSpeak: { model.armMicrophone() },
+                        onHold: { model.holdMicrophone() },
+                        onFinish: { model.releaseMicrophone() },
+                        onToggle: { model.microphone() },
+                        onCancel: { model.cancel() },
                         onType: { model.prepareTypedReply(); typedDestination = ""; showTyping = true },
                         onVoiceCenter: { if model.stage != .route { voiceCenter = $0 } }
                     )
@@ -170,13 +166,15 @@ private struct PointHomeContent: View {
             }
             .scrollIndicators(.hidden)
             .scrollBounceBehavior(.basedOnSize, axes: .vertical)
+            // With the talk panel up, a scroll view would delay and sometimes cancel the panel's press.
+            .scrollDisabled(model.stage != .home)
         }
     }
 
     private var wordmark: some View {
         HStack(alignment: .firstTextBaseline, spacing: 1) {
             Text("point").font(.title2.weight(.bold)).tracking(-1)
-            Circle().fill(PointTheme.accent).frame(width: 5, height: 5).offset(y: -2)
+            Circle().fill(PointTheme.logoDot).frame(width: 5, height: 5).offset(y: -2)
         }
         .accessibilityElement(children: .ignore).accessibilityLabel("Point")
     }
@@ -207,7 +205,6 @@ private struct PointHomeContent: View {
                     .background(PointTheme.background, in: Capsule())
             }
             .padding(.horizontal, 24).padding(.top, 12)
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             Spacer()
             routeSheet(maxPanelHeight: maxPanelHeight, bottomInset: bottomInset)
         }
@@ -233,7 +230,6 @@ private struct PointHomeContent: View {
                     }
                     Spacer(minLength: 12)
                 }
-                conversationControl
                 if model.journeyStarted, model.journeyPlan != nil { journeyControls }
                 else if model.journeyStarted, !model.isDemo { Text(model.gloveStatus).font(.subheadline.weight(.medium)) }
                 else if !model.journeyStarted { startRow }
@@ -243,9 +239,12 @@ private struct PointHomeContent: View {
                     if model.journeyPlan != nil { journeyLegs }
                     Divider()
                     if model.journeyStarted {
-                        Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : model.gloveStatus,
-                              systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
-                            .font(.subheadline.weight(.medium))
+                        HStack(spacing: 6) {
+                            Image(systemName: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left").accessibilityHidden(true)
+                            Text(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : model.gloveStatus)
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .accessibilityElement(children: .combine)
                         if !model.isDemo, model.journeyState != .arrived, model.journeyPlan == nil {
                             Button(model.journeyState == .paused ? "Resume guidance" : "Pause guidance") {
                                 if model.journeyState == .paused { model.resumeJourney() }
@@ -256,7 +255,9 @@ private struct PointHomeContent: View {
                             Toggle("Simulate correct pointing", isOn: Binding(get: { model.pointingAligned }, set: { model.setDemoAlignment($0) }))
                                 .font(.subheadline)
                         }
-                        Button(model.journeyPlan != nil ? "End trip" : "End walk") { model.cancel() }.font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
+                        Button { model.cancel() } label: {
+                            Text(model.journeyPlan != nil ? "End trip" : "End walk").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
+                        }
                     }
                     if !model.isDemo {
                         Button("Set up glove orientation") { showDeviceSetup = true }.frame(minHeight: 44)
@@ -273,7 +274,7 @@ private struct PointHomeContent: View {
     private var startRow: some View {
         HStack(spacing: 16) {
             Button { model.startJourney() } label: {
-                HStack { Text(model.isDemo ? "Try the walk" : model.journeyPlan != nil ? "Start trip" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right") }
+                HStack { Text(model.isDemo ? "Try the walk" : model.journeyPlan != nil ? "Start trip" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right").accessibilityHidden(true) }
                     .font(.body.weight(.semibold)).padding(.horizontal, 20).frame(minHeight: 54)
                     .foregroundStyle(.white).background(PointTheme.accent, in: Capsule())
             }
@@ -362,25 +363,10 @@ private struct PointHomeContent: View {
             .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private var conversationControl: some View {
-        HStack {
-            Button { model.microphone() } label: {
-                Label(model.voiceStatus, systemImage: model.isListening ? "waveform" : "mic.fill")
-                    .font(.body).frame(minHeight: 44)
-            }
-            Spacer(minLength: 8)
-            if model.conversationActive {
-                Button("End") { model.endConversation() }.frame(minWidth: 44, minHeight: 44)
-                    .accessibilityLabel("End voice conversation")
-            }
-        }
-    }
-
     private var journeySheet: some View {
         NavigationStack {
             List {
                 if !model.transcript.isEmpty { Section { Text(model.transcript).foregroundStyle(.secondary) } }
-                Section { conversationControl }
                 ForEach(model.journeyCandidates) { plan in
                     Button { model.selectJourney(plan) } label: {
                         JourneyChoiceRow(plan: plan)
@@ -400,6 +386,7 @@ private struct PointHomeContent: View {
             Form {
                 TextField("Place or address", text: $typedDestination)
                     .focused($typingFocused).submitLabel(.search).onSubmit(submitTyped)
+                    .accessibilityLabel("Place or address")
                 Button("Find destination", action: submitTyped).disabled(typedDestination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .navigationTitle("Where to?")
@@ -418,8 +405,12 @@ private struct PointHomeContent: View {
     private var destinationSheet: some View {
         NavigationStack {
             List {
-                Section { Text(model.transcript).foregroundStyle(.secondary) }
-                Section { conversationControl }
+                Section { Text(model.transcript).foregroundStyle(.secondary).accessibilityLabel("You said: \(model.transcript)") }
+                Section {
+                    Button { model.microphone() } label: { Label("Hold to reply by voice", systemImage: "mic.fill") }
+                        .buttonStyle(HoldToTalkStyle(onPress: { model.holdMicrophone() }, onRelease: { model.releaseMicrophone() }))
+                        .accessibilityLabel("Reply by voice")
+                }
                 if model.candidates.isEmpty {
                     ContentUnavailableView.search(text: model.transcript)
                 } else {

@@ -1,6 +1,7 @@
 import ActivityKit
 import AVFoundation
 import UIKit
+import PointCore
 
 @MainActor final class PocketBackgroundActivity {
     private var activity: Activity<PocketActivityAttributes>?
@@ -68,12 +69,14 @@ import UIKit
 /// used to keep the process alive.
 @MainActor final class PocketRouteSpeaker: NSObject, AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
+    private var ownsSession = false
     override init() { super.init(); synthesizer.delegate = self }
     func speak(_ text: String) {
         synthesizer.stopSpeaking(at: .immediate)
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .voicePrompt, options: [.duckOthers])
-        try? session.setActive(true)
+        if !ownsSession {
+            do { try AudioSessionCoordinator.shared.acquire(.speaking); ownsSession = true }
+            catch { return }
+        }
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         synthesizer.speak(utterance)
@@ -81,11 +84,16 @@ import UIKit
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor [weak self] in
             guard let self, !self.synthesizer.isSpeaking else { return }
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            self.releaseSession()
         }
     }
     func stop() {
         synthesizer.stopSpeaking(at: .immediate)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        releaseSession()
+    }
+    private func releaseSession() {
+        guard ownsSession else { return }
+        ownsSession = false
+        AudioSessionCoordinator.shared.release(.speaking)
     }
 }

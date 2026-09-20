@@ -23,14 +23,16 @@ struct VoiceConfigurationTests {
             # ignored
             export OPENAI_API_KEY = "file-key"
             ELEVENLABS_API_KEY = 'test-key' # comment
-            ELEVENLABS_VOICE_SPEED=0.9 # comment
+            DEEPGRAM_VOICE_SPEED=0.9 # comment
             ELEVENLABS_MODEL_ID=eleven_flash_v2_5
             """)
         #expect(configuration.openAIKey == "environment-key")
         #expect(configuration.elevenLabsKey == "test-key")
         #expect(configuration.speed == 0.9)
         #expect(VoiceConfiguration(fileContents: "ELEVENLABS_API_KEY=  ").elevenLabsKey == nil)
-        #expect(VoiceConfiguration(fileContents: "ELEVENLABS_VOICE_SPEED=nan").speed == 0.95)
+        #expect(VoiceConfiguration(fileContents: "DEEPGRAM_VOICE_SPEED=nan").speed == 0.95)
+        #expect(VoiceConfiguration(fileContents: "ELEVENLABS_VOICE_SPEED=1.1").speed == 1.1) // legacy name still honoured
+        #expect(VoiceConfiguration(fileContents: "DEEPGRAM_VOICE_SPEED=1.2\nELEVENLABS_VOICE_SPEED=0.8").speed == 1.2)
     }
 }
 

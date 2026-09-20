@@ -6,24 +6,8 @@ import SwiftUI
 import UIKit
 
 @MainActor final class PointViewModel: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
-    enum Stage { case home, recording, searching, clarifying, choosing, journeyChoice, route, indoorDemo }
-    enum VoicePhase { case idle, starting, listening, thinking, speaking }
-    @Published private(set) var voicePhase: VoicePhase = .idle
-    @Published private(set) var conversationActive = false
-    private var voiceContext: Stage = .home
-    private var replyStartTask: Task<Void, Never>?
-    private var voiceGeneration = UUID()
-    private var lastSpokenReply = ""
-    var isListening: Bool { voicePhase == .listening }
-    var voiceStatus: String {
-        switch voicePhase {
-        case .idle: return "Talk to Point"
-        case .starting: return "Opening microphone"
-        case .listening: return "Listening · Pause when you’re done"
-        case .thinking: return "Thinking"
-        case .speaking: return recorder.supportsInterruption && conversationActive ? "Point is speaking · You can interrupt" : "Point is speaking"
-        }
-    }
+    /// `armed`: the hand was tapped and the talk panel is up, but the microphone opens only while the panel is held.
+    enum Stage { case home, armed, recording, searching, clarifying, choosing, journeyChoice, route, indoorDemo }
     @Published var stage: Stage = .home
     @Published var transcript = ""
     @Published var candidates: [PlaceCandidate] = []
@@ -47,6 +31,9 @@ import UIKit
     // no mode switch: a short walk just walks, a long one asks "T or walk?", and the utterance can decide.
     static let offerTransitAboveMinutes = 10.0
     @Published private(set) var journeyCandidates: [JourneyPlan] = []
+    /// Push to talk: the finger is on the microphone, and the current capture ends on release, not on a pause.
+    private var microphoneHeld = false
+    private var holdToTalkActive = false
     @Published private(set) var journeyPlan: JourneyPlan?
     @Published private(set) var journeyPhase: JourneyCoordinator.Phase = .idle
     @Published private(set) var transitCountdown: JourneyCoordinator.Countdown?
@@ -80,8 +67,10 @@ import UIKit
     private lazy var spokenFeedback = SpokenFeedback(player: speechPlayer, onProgress: { [weak self] text in
         self?.displayedReply = text
     }) { [weak self] in
-        guard let configuration = self?.developmentVoiceConfiguration, configuration.elevenLabsKey != nil else { return nil }
-        return ElevenLabsSpeech(configuration: configuration)
+        guard let configuration = self?.developmentVoiceConfiguration else { return nil }
+        if configuration.deepgramKey != nil { return DeepgramSpeech(configuration: configuration) }
+        if configuration.elevenLabsKey != nil { return ElevenLabsSpeech(configuration: configuration) }
+        return nil
     }
 
     // Local development only. Production app should inject authenticated backend implementations
@@ -152,31 +141,28 @@ import UIKit
         }.store(in: &subscriptions)
         // Words appear as they are spoken; the final transcript replaces them after finishing.
         recorder.$liveTranscript.sink { [weak self] text in
-            guard let self, voicePhase == .listening else { return }
+            guard let self, stage == .recording else { return }
             transcript = text
         }.store(in: &subscriptions)
         recorder.$endpoint.sink { [weak self] endpoint in
-            guard let self, voicePhase == .listening, !isDemo else { return }
+            // Holding the microphone decides the end; pauses mid-sentence are the rider's to take.
+            guard let self, stage == .recording, !isDemo, !holdToTalkActive else { return }
             switch endpoint {
             case .listening: break
             case .finished: finishRecording()
             case .noSpeech:
-                endConversation()
-                announce("I’ll pause here. Tap to talk again.")
+                recordingLimit?.cancel()
+                recorder.cancel()
+                // Cancelling capture also cancels the endpoint task delivering this event.
+                // Set the retry state directly; fail() deliberately ignores cancelled tasks.
+                message = ServiceError.emptyTranscript.localizedDescription
+                ask(ServiceError.emptyTranscript.localizedDescription, listensForReply: false)
             }
         }.store(in: &subscriptions)
-        recorder.onInterruption = { [weak self] in
-            guard let self, self.conversationActive, self.voicePhase == .speaking else { return }
-            self.spokenFeedback.stop()
-            self.replyListeningTask?.cancel()
-            self.voicePhase = .listening
-            self.transcript = ""
-            self.beginListeningState()
-        }
         // VoiceOver owns spoken announcements when active, avoiding two voices at once.
         NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.endConversation() }.store(in: &subscriptions)
+            .sink { [weak self] _ in self?.stopSpokenReply() }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: UIAccessibility.announcementDidFinishNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
@@ -187,16 +173,6 @@ import UIKit
                     reply.finished()
                 }
             }.store(in: &subscriptions)
-        NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] notification in
-                guard let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
-                      reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue else { return }
-                self?.endConversation()
-            }.store(in: &subscriptions)
-        NotificationCenter.default.publisher(for: AVAudioSession.mediaServicesWereResetNotification)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.endConversation() }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
@@ -213,6 +189,7 @@ import UIKit
     }
 
     func requestLocation() {
+        guard stage != .indoorDemo else { return }
         locationManager.requestWhenInUseAuthorization()
         if locationManager.authorizationStatus == .authorizedWhenInUse || locationManager.authorizationStatus == .authorizedAlways {
             locationManager.startUpdatingLocation()
@@ -220,7 +197,7 @@ import UIKit
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        if (manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways) {
+        if (manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways), stage != .indoorDemo {
             manager.startUpdatingLocation()
         } else if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
             currentLocation = nil
@@ -266,90 +243,97 @@ import UIKit
         }
     }
 
+    /// VoiceOver's activation: tap to start, tap again to finish, and the pause detector also finishes.
     func microphone() {
-        startListening(automatically: false)
+        startListening(automatically: false, holdToTalk: false)
     }
 
-    private func startListening(automatically: Bool) {
-        guard !demoInFlight, UIApplication.shared.applicationState == .active else { return }
-        if voicePhase == .listening { finishRecording(); return }
+    /// Tap on the hand: bring up the talk panel without opening the microphone yet.
+    func armMicrophone() {
+        guard !demoInFlight, stage == .home, UIApplication.shared.applicationState == .active else { return }
         work?.cancel()
-        let context = stage == .recording || stage == .searching ? voiceContext : stage
         stopSpokenReply()
-        conversationActive = true
-        voiceContext = context
         transcript = ""
-        voicePhase = .starting
-        let generation = voiceGeneration
-        replyStartTask = Task { [weak self] in
-            guard let self else { return }
+        stage = .armed
+        UIAccessibility.post(notification: .announcement, argument: "Hold the panel while you speak, then let go.")
+    }
+
+    /// Finger down on the talk panel: record until `releaseMicrophone`, however long the pauses.
+    func holdMicrophone() {
+        guard stage != .recording else { return }
+        microphoneHeld = true
+        startListening(automatically: false, holdToTalk: true)
+    }
+
+    func releaseMicrophone() {
+        microphoneHeld = false
+        // A release before capture started is handled when the start task resumes.
+        if stage == .recording, holdToTalkActive { finishRecording() }
+    }
+
+    private func startListening(automatically: Bool, holdToTalk: Bool) {
+        guard !demoInFlight, UIApplication.shared.applicationState == .active else { return }
+        if stage == .recording { finishRecording(); return }
+        // A hold interrupts a search in flight (and, via stopSpokenReply, whatever Point is saying).
+        guard stage != .searching || holdToTalk else { return }
+        work?.cancel()
+        stopSpokenReply()
+        transcript = ""
+        holdToTalkActive = holdToTalk
+        work = Task {
             do {
                 try await recorder.start()
-                guard !Task.isCancelled, voiceGeneration == generation,
-                      UIApplication.shared.applicationState == .active else { return }
-                voicePhase = .listening
-                beginListeningState()
-                recorder.playListeningCue()
+                guard !Task.isCancelled, UIApplication.shared.applicationState == .active else { recorder.cancel(); return }
+                // A tap too short for capture to start: nothing was said, so do not search.
+                guard !holdToTalk || microphoneHeld else { recorder.cancel(); return }
+                stage = .recording
+                // Do not play generated speech into our own recording.
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-            } catch {
-                guard voiceGeneration == generation, !Task.isCancelled else { return }
-                conversationActive = false
-                voicePhase = .idle
-                fail(error)
-            }
-        }
-    }
-
-    private func beginListeningState() {
-        if stage == .home || stage == .clarifying || stage == .recording || stage == .searching { stage = .recording }
-        recordingLimit?.cancel()
-        recordingLimit = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(60))
-            guard !Task.isCancelled, let self, self.voicePhase == .listening else { return }
-            if self.transcript.isEmpty { self.endConversation() }
-            else { self.finishRecording() }
-        }
-    }
-
-    func endConversation() {
-        conversationActive = false
-        stopSpokenReply()
-        if stage == .recording || stage == .searching {
-            work?.cancel()
-            stage = followUpPrompt == nil ? .home : .clarifying
+                if !automatically {
+                    UIAccessibility.post(notification: .announcement, argument: holdToTalk
+                                         ? "Listening. Say a destination, then let go."
+                                         : "Listening. Say a destination. I'll finish when you pause.")
+                }
+                recordingLimit = Task {
+                    try? await Task.sleep(for: .seconds(60))
+                    guard !Task.isCancelled, stage == .recording else { return }
+                    finishRecording()
+                }
+            } catch { fail(error) }
         }
     }
 
     private func finishRecording() {
-        guard voicePhase == .listening else { return }
+        guard stage == .recording else { return }
         recordingLimit?.cancel()
-        voicePhase = .thinking
-        if stage != .route && stage != .journeyChoice && stage != .choosing { stage = .searching }
+        stage = .searching
         work = Task {
             do {
                 let recording = try await recorder.finish()
                 guard !Task.isCancelled else { return }
-                // Use the live transcript immediately. Batch transcription is a fallback when
-                // Apple Speech produced no words, avoiding an extra network wait on every turn.
+                // OpenAI gives the final transcript when configured; the live Apple Speech text
+                // is the fallback, so voice still works without a key or when the request fails.
                 var text = recording.transcript
                 let configuration = developmentVoiceConfiguration
-                if text.isEmpty, let key = configuration.openAIKey {
-                    do { text = try await OpenAITranscriber(model: configuration.transcriptionModel,
-                                                           authorization: { "Bearer \(key)" }).transcribe(audio: recording.audio) }
+                // Deepgram first (Nova-3 with Boston place-name keyterms), then OpenAI, then the live Apple text.
+                let transcriber: (any SpeechTranscribing)? = if let key = configuration.deepgramKey {
+                    DeepgramTranscriber(apiKey: key)
+                } else if let key = configuration.openAIKey {
+                    OpenAITranscriber(model: configuration.transcriptionModel, authorization: { "Bearer \(key)" })
+                } else { nil }
+                if let transcriber {
+                    do { text = try await transcriber.transcribe(audio: recording.audio) }
                     catch { if text.isEmpty { throw error } }
                 }
                 guard !Task.isCancelled else { return }
                 guard !text.isEmpty else { throw ServiceError.emptyTranscript }
                 transcript = text
-                speechPlayer.conversationEngine = nil
-                voicePhase = .idle
                 await search(text)
             } catch { fail(error) }
         }
     }
 
     func searchTyped(_ text: String) {
-        conversationActive = false
         work?.cancel()
         recordingLimit?.cancel()
         stopSpokenReply()
@@ -360,7 +344,6 @@ import UIKit
     }
 
     func prepareTypedReply() {
-        conversationActive = false
         work?.cancel()
         recordingLimit?.cancel()
         stopSpokenReply()
@@ -370,7 +353,6 @@ import UIKit
 
     private func search(_ text: String) async {
         guard !Task.isCancelled else { return }
-        if await handleConversationCommand(text) { return }
         if IndoorDemoCommand.matches(text) { enterIndoorDemo(); return }
         let reply = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
         if ["cancel", "never mind", "nevermind", "stop"].contains(reply) { cancel(); return }
@@ -424,7 +406,9 @@ import UIKit
                     return
                 case .destination:
                     guard !intent.query.isEmpty else { ask("Which place would you like to go to?"); return }
-                    query = intent.query
+                    // Belt and braces: a model that leaves "near me" in the query sends MapKit hunting for those words.
+                    let cleaned = VoiceDestination.destinationQuery(from: intent.query)
+                    query = cleaned.isEmpty ? intent.query : cleaned
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -482,7 +466,6 @@ import UIKit
     }
 
     private func ask(_ question: String, listensForReply: Bool = true) {
-        if !listensForReply { conversationActive = false }
         displayedReply = ""
         followUpPrompt = question
         stage = .clarifying
@@ -551,7 +534,7 @@ import UIKit
             route = plan
             stage = .route
             locationManager.startUpdatingHeading()
-        announce(NavigationSpeech.routeReady(for: place, handsFree: conversationActive))
+        announce(NavigationSpeech.routeReady(for: place))
     }
 
     private func resolveOriginCity(at fix: CLLocation) async -> AppleMapsService.CityContext? {
@@ -628,17 +611,13 @@ import UIKit
             guard !Task.isCancelled else { return }
             if plans.count == 1, plans[0].isWalkingOnly, let walk = plans[0].firstWalk {
                 showRoute(walk, to: place)
-                announce(transitRequested ? "I couldn't find a bus or train for that trip, so here's the walk. \(NavigationSpeech.routeReady(for: place, handsFree: conversationActive))"
-                         : "That's close enough to walk. \(NavigationSpeech.routeReady(for: place, handsFree: conversationActive))")
+                announce(transitRequested ? "I couldn't find a bus or train for that trip, so here's the walk. \(NavigationSpeech.routeReady(for: place))"
+                         : "That's close enough to walk. \(NavigationSpeech.routeReady(for: place))")
                 return
             }
-            journeyCandidates = plans
+            // Plans arrive fastest first; take it rather than asking the rider to compare routes.
             pendingJourneyPlace = place
-            pendingRoute = nil
-            followUpPrompt = nil
-            candidates = []
-            stage = .journeyChoice
-            announce("Here's a route by transit. \(plans[0].summary) Say first, second, or third to choose a route.")
+            selectJourney(plans[0])
         } catch {
             guard !Task.isCancelled else { return }
             ask("I couldn't plan a transit trip there. Which place would you like to try instead?")
@@ -660,7 +639,7 @@ import UIKit
         route = walk
         stage = .route
         locationManager.startUpdatingHeading()
-        announce("Transit route ready. \(plan.summary) Say start when you’re ready.")
+        announce("Transit route ready. \(plan.summary) Tap Start when you're ready.")
     }
 
     var isWalkingLeg: Bool { if case .walking = journeyPhase { return true } else { return false } }
@@ -745,7 +724,7 @@ import UIKit
             if isWalkingLeg { announce("\(ride.route.name) toward \(ride.headsign) is arriving at \(ride.board.name).") }
             else { announce("Your \(ride.route.name) toward \(ride.headsign) is here. Board now.") }
         case .departedTentatively:
-            announce("If you boarded, say I’m on board. Otherwise, say not on board.")
+            announce("If you boarded, tap I'm on board. If not, tap Not on board.")
         case .boarded(let ride):
             let stops = ride.stopsRidden == 1 ? "one stop" : "\(ride.stopsRidden) stops"
             announce("On the \(ride.route.name). \(stops) to \(ride.alight.name). I'll tell you when to get off.")
@@ -757,7 +736,7 @@ import UIKit
             announce("Get off here at \(ride.alight.name).")
         case .alighted: break
         case .trackingLost(let ride):
-            announce("Live tracking isn't available. Say I’m off when you reach \(ride.alight.name).")
+            announce("Live tracking isn't available. Tap I'm off when you reach \(ride.alight.name).")
         case .awaitingSignal:
             announce("Head for the exit. Directions resume once GPS returns.")
         case .signalRestored(let leg):
@@ -771,7 +750,7 @@ import UIKit
             announce(text)
         case .needsReplan(let reason):
             journeyReplanReason = reason
-            announce("\(reason) Say replan to plan again from here.")
+            announce("\(reason) Tap Replan to plan again from here.")
         case .arrived:
             finishArrival()
             announce("You've arrived at \(journeyPlan.destinationName).")
@@ -811,58 +790,6 @@ import UIKit
             }
         }
     }
-
-    #if DEBUG
-    /// Physical-device regression for the Send/cancel audio-graph crash. Does not
-    /// call transcription/search services or retain microphone audio/transcripts.
-    func verifyVoiceAudioLifecycle() async {
-        let capture = VoiceRecorder()
-        let player = PhoneSpeechPlayer()
-        player.conversationEngine = capture.audioEngine
-        let report = URL.documentsDirectory.appending(path: "voice-audio-check.txt")
-        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("voice-check.caf")
-        var lines: [String] = []
-        func record(_ line: String) {
-            lines.append(line)
-            try? lines.joined(separator: "\n").write(to: report, atomically: true, encoding: .utf8)
-        }
-        defer { player.stop(); capture.cancel(); try? FileManager.default.removeItem(at: fixture) }
-        record("START build 8")
-        do {
-            let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
-            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 9600)!
-            buffer.frameLength = 9600
-            for i in 0..<9600 { buffer.floatChannelData![0][i] = 0 }
-            do {
-                let file = try AVAudioFile(forWriting: fixture, settings: format.settings)
-                try file.write(from: buffer)
-            }
-            let audio = SpeechAudio(data: try Data(contentsOf: fixture), text: "Audio lifecycle check")
-            for cycle in 1...3 {
-                record("Cycle \(cycle): starting microphone")
-                try await capture.start()
-                record("Cycle \(cycle): microphone started")
-                capture.playListeningCue()
-                try await Task.sleep(for: .milliseconds(150))
-                capture.playListeningCue()
-                try await Task.sleep(for: .milliseconds(150))
-                try player.play(audio, progress: { _ in }, completion: { _ in })
-                player.stop()
-                try player.play(audio, progress: { _ in }, completion: { _ in })
-                try await Task.sleep(for: .milliseconds(500))
-                record("Cycle \(cycle): reply finished, engine running = \(capture.audioEngine.isRunning)")
-                guard capture.audioEngine.isRunning else { throw RecorderError.couldNotRecord }
-                let recording = try await capture.finish()
-                record("Cycle \(cycle): recording finished (\(recording.audio.count) bytes)")
-                guard !recording.audio.isEmpty else { throw RecorderError.couldNotRecord }
-                capture.cancel(); capture.cancel()
-                record("PASS cycle \(cycle): repeated cue, reply stop/replay, finish, repeated cancel")
-            }
-            record("PASS all audio lifecycle checks")
-            message = "Voice audio check passed."
-        } catch { record("FAIL \(error.localizedDescription)"); message = "Voice audio check failed." }
-    }
-    #endif
 
     func preview() { playVoiceDemo() }
 
@@ -971,7 +898,6 @@ import UIKit
     }
 
     func cancel() {
-        conversationActive = false
         gloveWatchdog?.cancel()
         gloveWatchdog = nil
         locationManager.allowsBackgroundLocationUpdates = false
@@ -1009,7 +935,6 @@ import UIKit
 
     func sceneInactive() {
         if stage == .indoorDemo, deviceConnection.keepsDemoRunningInBackground { return }
-        endConversation()
         deviceConnection.glove.northCorrection = nil
         gloveWatchdog?.cancel()
         gloveWatchdog = nil
@@ -1025,6 +950,7 @@ import UIKit
 
     func sceneActive() {
         controller.setOutputEnabled(true)
+        guard stage != .indoorDemo else { return }
         requestLocation()
         locationManager.startUpdatingHeading()
         if stage == .route, !isDemo {
@@ -1036,8 +962,8 @@ import UIKit
     func enterIndoorDemo() {
         // End any walk/transit plan and pending confirmations before switching coordinate systems.
         cancel()
-        requestLocation()
-        locationManager.startUpdatingHeading()
+        locationManager.stopUpdatingLocation()
+        locationManager.stopUpdatingHeading()
         stage = .indoorDemo
     }
 
@@ -1066,129 +992,41 @@ import UIKit
     }
 
     private func stopSpokenReply() {
-        voiceGeneration = UUID()
-        replyStartTask?.cancel()
-        replyStartTask = nil
         replyListeningTask?.cancel()
         replyListeningTask = nil
-        recordingLimit?.cancel()
         voiceOverReply = nil
         spokenFeedback.stop()
-        recorder.cancel()
-        speechPlayer.conversationEngine = nil
-        voicePhase = .idle
     }
 
     private func listenAfterReply(expectedStage: Stage) {
-        guard stage == expectedStage, UIApplication.shared.applicationState == .active else { return }
-        startListening(automatically: true)
+        replyListeningTask?.cancel()
+        replyListeningTask = Task { [weak self] in
+            // Allow the speaker's short acoustic tail to settle before switching to input.
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self, self.stage == expectedStage,
+                  UIApplication.shared.applicationState == .active else { return }
+            self.startListening(automatically: true, holdToTalk: false)
+        }
     }
 
     private func announce(_ text: String, listensForReply: Bool = false) {
         stopSpokenReply()
-        lastSpokenReply = text
         guard UIApplication.shared.applicationState == .active else { displayedReply = text; return }
         let expectedStage = stage
-        let generation = voiceGeneration
-        let conversational = (conversationActive || listensForReply) && stage != .indoorDemo && !isDemo
         let finished: () -> Void = { [weak self] in
-            guard let self, self.voiceGeneration == generation else { return }
-            self.replyListeningTask?.cancel()
-            if conversational, self.recorder.isRecording {
-                self.voicePhase = .listening
-                self.recorder.assistantFinished()
-                self.beginListeningState()
-            } else { self.voicePhase = .idle }
+            guard listensForReply, expectedStage == .clarifying || expectedStage == .choosing else { return }
+            // Only VoiceOver gets a hands-free reply; everyone else holds the microphone to answer.
+            guard UIAccessibility.isVoiceOverRunning else { return }
+            self?.listenAfterReply(expectedStage: expectedStage)
         }
-        if conversational {
-            conversationActive = true
-            voiceContext = expectedStage
-            voicePhase = .starting
-            replyStartTask = Task { [weak self] in
-                guard let self else { return }
-                do {
-                    try await recorder.start(whileReplyingTo: text)
-                    guard !Task.isCancelled, voiceGeneration == generation else { return }
-                    speechPlayer.conversationEngine = recorder.audioEngine
-                } catch {
-                    guard !Task.isCancelled, voiceGeneration == generation else { return }
-                    conversationActive = false
-                    recorder.cancel()
-                    speechPlayer.conversationEngine = nil
-                }
-                voicePhase = .speaking
-                replyListeningTask = Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(45))
-                    guard !Task.isCancelled, let self, self.voiceGeneration == generation,
-                          self.voicePhase == .speaking else { return }
-                    self.spokenFeedback.stop()
-                    self.displayedReply = text
-                    finished()
-                }
-                // In a conversation Point owns its voice, including with VoiceOver enabled,
-                // so it can stop immediately. Don't duplicate it with an accessibility announcement.
-                spokenFeedback.speak(text, onFailed: { [weak self] in
-                    guard let self, self.voiceGeneration == generation else { return }
-                    self.displayedReply = text
-                    finished()
-                }, onFinished: finished)
-            }
-        } else if UIAccessibility.isVoiceOverRunning {
+        if UIAccessibility.isVoiceOverRunning {
             displayedReply = text
-            voicePhase = .speaking
             voiceOverReply = (text, finished)
             UIAccessibility.post(notification: .announcement, argument: text)
         } else {
-            voicePhase = .speaking
-            spokenFeedback.speak(text, onFailed: finished, onFinished: finished)
+            spokenFeedback.speak(text, onFinished: finished)
         }
     }
-
-    private func handleConversationCommand(_ text: String) async -> Bool {
-        if let command = ConversationCommand.parse(text) {
-            switch command {
-            case .endConversation: endConversation(); return true
-            case .cancelRoute: cancel(); return true
-            case .repeatReply:
-                announce(lastSpokenReply.isEmpty ? "Say a destination, or ask for demo mode." : lastSpokenReply, listensForReply: true)
-                return true
-            case .start where stage == .route && !journeyStarted: startJourney(); return true
-            case .pause where stage == .route && journeyStarted && journeyState == .navigating:
-                pauseJourney(); announce("Route paused. Say resume when you’re ready."); return true
-            case .resume where stage == .route && journeyState == .paused:
-                resumeJourney(); announce("Resuming your route."); return true
-            case .atStop where stage == .route:
-                if case .walking(let leg) = journeyPhase, let plan = journeyPlan,
-                   plan.legs.dropFirst(leg + 1).contains(where: { if case .ride = $0 { return true }; return false }) {
-                    confirmAtStop(); return true
-                }
-            case .boarded where stage == .route:
-                switch journeyPhase {
-                case .waitingAtStop, .vehicleArriving, .riding(_, _, false, _): confirmBoarded(); return true
-                default: break
-                }
-            case .notBoarded where stage == .route:
-                if case .riding(_, _, false, _) = journeyPhase { notOnBoard(); return true }
-            case .alighted where stage == .route:
-                switch journeyPhase { case .riding, .alighting: confirmAlighted(); return true; default: break }
-            case .replan where stage == .route: replanJourney(); return true
-            default: break
-            }
-            announce("That action isn’t available here. Say a destination, or say stop listening.", listensForReply: true)
-            return true
-        }
-        let choice = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-        let indices = ["first": 0, "the first one": 0, "one": 0, "second": 1, "the second one": 1, "two": 1, "third": 2, "the third one": 2, "three": 2]
-        if stage == .journeyChoice {
-            let index = indices[choice] ?? (["yes", "that one", "take it"].contains(choice) ? 0 : -1)
-            if journeyCandidates.indices.contains(index) { selectJourney(journeyCandidates[index]); return true }
-        }
-        if stage == .choosing, let index = indices[choice], candidates.indices.contains(index) {
-            await route(to: candidates[index]); return true
-        }
-        return false
-    }
-
 }
 
 enum DemoRoute {

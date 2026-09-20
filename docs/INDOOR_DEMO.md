@@ -76,3 +76,9 @@ The initial pocket estimator tests cover stationary noise, constant acceleration
 ## Build 12 follow-up
 
 Fixed shared magnetic/relative reference invalidation and retained the physical mounting map through temporary health dips. Added estimated sequential arrival and body-relative spoken turn cues, a full-screen touch guard, a WidgetKit Live Activity, and background Bluetooth lifecycle handling for the pocket session. Regression tests cover reference continuity, recovery after gyro-quality dips, estimated arrival dwell/new-step requirements, and turn direction. 143 core tests pass. The iPhone was unavailable while these changes were implemented, so neither the reported walk log nor locked-screen runtime has yet been verified on hardware.
+
+## Integration build 13
+
+Merged upstream `7ba0262` with the saved pocket implementation. The retrieved physical walk log confirms the reported failure coincided with BNO055 system calibration changing from 0 to 1 while gyro stayed at 3 and fresh motion samples continued. The relaxed demo now retains its separate relative reference across that transition. Pocket estimation, sequential turn cues, touch guard and Live Activity remain included alongside the upstream push-to-talk and transit changes. Session logs include the installed build number.
+
+The merged core suite passes 163 tests. Sustained motion updates and glove guidance with the screen locked still require a physical walk; the Live Activity alone is not evidence of background execution or positioning accuracy.

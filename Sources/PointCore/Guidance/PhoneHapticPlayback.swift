@@ -22,7 +22,13 @@ public final class PhoneHapticPlayback {
     private var retryAfter: TimeInterval = 0
     private var generation = UUID()
     private var latestTime: TimeInterval = 0
+    private var consecutiveFailures = 0
+    private var readySince: TimeInterval?
     public static let burstDuration: TimeInterval = 0.35
+    /// A cue lost to one transient hardware failure must come back within a frame or two,
+    /// not a whole second of silent guidance. Repeated failures still back off quickly, so a
+    /// genuinely dead engine is never rebuilt at the 20 Hz rate of the guidance loop.
+    static let retryDelays: [TimeInterval] = [0.1, 0.2, 0.4, 1]
 
     public init(output: any PhoneHapticOutput) { self.output = output }
 
@@ -66,6 +72,8 @@ public final class PhoneHapticPlayback {
         ready = false
         burstStarted = nil
         retryAfter = 0
+        consecutiveFailures = 0
+        readySince = nil
         errorMessage = nil
     }
 
@@ -88,6 +96,7 @@ public final class PhoneHapticPlayback {
                 errorMessage = "Vibration interrupted · Retrying"
             }
             ready = true
+            readySince = now
             retryAfter = 0
             errorMessage = nil
             return true
@@ -101,10 +110,15 @@ public final class PhoneHapticPlayback {
         // A poisoned player/engine must not be retried forever. Replace it on the next attempt.
         generation = UUID()
         output.shutdown()
+        // An engine that ran normally for a while and then died is a fresh interruption, not
+        // the next step of a failing rebuild loop, so its recovery starts fast again.
+        if let readySince, now - readySince >= 1 { consecutiveFailures = 0 }
+        readySince = nil
         submittedIntensity = 0
         ready = false
         burstStarted = nil
-        retryAfter = now + 1
+        retryAfter = now + Self.retryDelays[min(consecutiveFailures, Self.retryDelays.count - 1)]
+        consecutiveFailures += 1
         errorMessage = "Vibration interrupted · Retrying"
     }
 }

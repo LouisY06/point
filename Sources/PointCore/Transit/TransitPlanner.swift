@@ -63,7 +63,8 @@ public enum TransitPlanner {
         if journeys.isEmpty {
             journeys.append(try await walkingOnly(from: origin, to: destination, name: destinationName, walking: walking))
         }
-        return journeys
+        // Fastest first, now that the walking legs carry Apple's real times.
+        return journeys.enumerated().sorted { ($0.element.estimatedSeconds, $0.offset) < ($1.element.estimatedSeconds, $1.offset) }.map(\.element)
     }
 
     // MARK: Search
@@ -74,9 +75,13 @@ public enum TransitPlanner {
             let distance = RouteGeometry.distanceMeters(stop.coordinate, destination)
             return distance <= options.searchRadiusMeters ? distance : nil
         }
+        // Estimated seconds door to door, so the first candidate is the fastest, not the shortest walk.
         func score(walk1: Double, rides: [(RidePattern, Int, Int)], walk2: Double, transferWalk: Double = 0) -> Double {
-            walk1 + walk2 + transferWalk + Double(rides.count - 1) * 300 + rides.reduce(0) { $0 + Double($1.2 - $1.1) * 60 }
+            let walking = (walk1 + walk2 + transferWalk) / TravelEstimate.walkingMetersPerSecond
+            let riding = rides.reduce(0.0) { $0 + TravelEstimate.rideSeconds(stops: $1.2 - $1.1, isBus: isBus($1.0.routeID)) }
+            return walking + riding + Double(rides.count - 1) * TravelEstimate.transferSeconds
         }
+        func isBus(_ routeID: String) -> Bool { !TransitRoute.rapidTransit.contains { $0.id == routeID } }
         // Flat-earth metres; exact enough for a 120 m transfer test and far cheaper than CLLocation.
         func flatDistance(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> Double {
             let dy = (a.latitude - b.latitude) * 111_195
