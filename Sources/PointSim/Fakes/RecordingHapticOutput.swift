@@ -3,7 +3,7 @@ import PointCore
 
 /// Phone-side vibration output. The app composes `PhoneHapticEnvelope` + `PhoneHapticPlayback`;
 /// the harness drives the same pair so the trace shows what the phone would have felt like.
-@MainActor public final class RecordingHapticOutput: PhoneHapticOutput {
+public final class RecordingHapticOutput: PhoneHapticOutput {
     public struct Call {
         public let second: Double
         public let kind: String
@@ -18,7 +18,7 @@ import PointCore
 
     public init() {}
 
-    public func prepare(onInterruption: @escaping @MainActor () -> Void) throws {
+    public func prepare(onInterruption: @escaping (PhoneHapticInterruption) -> Void) throws {
         if failNextPrepare {
             failNextPrepare = false
             throw GloveTransportError.unsupported

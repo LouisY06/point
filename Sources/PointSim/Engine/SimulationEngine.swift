@@ -47,6 +47,7 @@ import PointCore
         var started = false
         var stopped = false
         var linkAllowed = true
+        var headingMuted = false
         var lastFix: CLLocation?
         var previousSecond = -1.0
         var arrivedAt: Double?
@@ -66,7 +67,7 @@ import PointCore
             while timelineIndex < sortedTimeline.count, sortedTimeline[timelineIndex].at <= now {
                 let event = sortedTimeline[timelineIndex]
                 timelineIndex += 1
-                apply(event, to: controller, glove: glove, linkAllowed: &linkAllowed,
+                apply(event, to: controller, glove: glove, linkAllowed: &linkAllowed, headingMuted: &headingMuted,
                       stopped: &stopped, now: date, second: now, events: &events)
             }
 
@@ -105,7 +106,8 @@ import PointCore
             }
             var heading: HeadingReading?
             if let reading = arm.packet(at: now, bearingToTarget: bearingToTarget, link: scenario.link,
-                                        connected: glove.connection == .ready, clock: clock, random: &random) {
+                                        connected: glove.connection == .ready && !headingMuted,
+                                        clock: clock, random: &random) {
                 heading = reading
                 controller.receive(.heading(reading), now: date)
             }
@@ -132,9 +134,13 @@ import PointCore
                     detail["errorDegrees"] = feedback.angularErrorDegrees.map { String(format: "%.2f", $0) } ?? "nil"
                     detail["conservativeDegrees"] = feedback.conservativeErrorDegrees.map { String(format: "%.2f", $0) } ?? "nil"
                 }
-                events.append(Trace.Event(t: command.second,
-                                          kind: intent == .stop ? "haptic.stop" : "haptic.confirm",
-                                          detail: detail))
+                let kind: String
+                switch intent {
+                case .stop: kind = "haptic.stop"
+                case .confirmAlignment: kind = "haptic.confirm"
+                default: kind = "haptic.cue"
+                }
+                events.append(Trace.Event(t: command.second, kind: kind, detail: detail))
             }
 
             frames.append(Trace.Frame(
@@ -151,6 +157,7 @@ import PointCore
                 connection: controller.connection.rawValue,
                 beaconIndex: controller.navigation.beaconIndex,
                 status: feedback.status.rawValue,
+                locationIssue: feedback.locationIssue.map(Self.tag),
                 errorDegrees: feedback.angularErrorDegrees,
                 conservativeDegrees: feedback.conservativeErrorDegrees,
                 distanceMeters: feedback.distanceToBeaconMeters,
@@ -175,6 +182,16 @@ import PointCore
                                                   final: $0.isFinalDestination, instruction: $0.instruction)
                         }),
                      frames: frames, events: events, results: results, metrics: metrics)
+    }
+
+    private static func tag(_ issue: LocationFeedbackIssue) -> String {
+        switch issue {
+        case .missing: return "missing"
+        case .invalid: return "invalid"
+        case .inaccurate: return "inaccurate"
+        case .stale: return "stale"
+        case .nearby: return "nearby"
+        }
     }
 
     private struct VoiceOutcome {
@@ -223,8 +240,8 @@ import PointCore
     }
 
     private func apply(_ event: TimelineEvent, to controller: PointController, glove: RecordingGlove,
-                       linkAllowed: inout Bool, stopped: inout Bool, now: Date, second: Double,
-                       events: inout [Trace.Event]) {
+                       linkAllowed: inout Bool, headingMuted: inout Bool, stopped: inout Bool, now: Date,
+                       second: Double, events: inout [Trace.Event]) {
         switch event.action {
         case .gesture:
             let gesture = GloveGesture(rawValue: event.value ?? "") ?? .checkDirection
@@ -247,6 +264,24 @@ import PointCore
         case .battery:
             glove.emit(.battery(percent: Int(event.value ?? "") ?? 0))
             events.append(Trace.Event(t: second, kind: "battery", detail: ["percent": event.value ?? ""]))
+        case .headingUnavailable:
+            // `FirmwareGlove` emits this when calibration or pointing setup is lost, and sends no
+            // headings again until it recovers.
+            headingMuted = true
+            glove.emit(.headingUnavailable)
+            events.append(Trace.Event(t: second, kind: "link.headingUnavailable"))
+        case .headingRestored:
+            headingMuted = false
+            events.append(Trace.Event(t: second, kind: "link.headingRestored"))
+        case .outputOff:
+            controller.setOutputEnabled(false)
+            events.append(Trace.Event(t: second, kind: "output.disabled"))
+        case .outputOn:
+            controller.setOutputEnabled(true)
+            events.append(Trace.Event(t: second, kind: "output.enabled"))
+        case .vehicleArrived:
+            controller.emit(.vehicleArrived)
+            events.append(Trace.Event(t: second, kind: "transit.vehicleArrived"))
         case .stop:
             stopped = true
             controller.stop()

@@ -321,7 +321,7 @@ Phases 1–2 are independently useful; nothing later is required for them to pay
 - **Open:** should metric baselines block CI or only annotate the PR? Starting as annotate‑only avoids
   a noisy gate while thresholds are still being tuned.
 
-## 12. Phase 1 status (branch `test-harness`)
+## 12. Phase 1 status (based on `codex/glove-pocket-integration`)
 
 Implemented on this branch, additive only: `Sources/PointSim` (clock, seeded RNG, scenario schema,
 route builder, walker/GPS, arm/IMU, recording glove and phone-haptic adapters, scripted voice
@@ -329,9 +329,21 @@ services, engine, trace, assertions, metrics, Markdown report), `Sources/PointSi
 `Scenarios/*.json` and `Tests/PointSimTests`. `App` is untouched; `Package.swift` gains the new
 targets and `PointCore` gains one additive, behaviour-free seam, `SyntheticRoute.plan(…)`, which
 runs synthetic geometry through the existing `RouteSegmenter` + `TurnPointExtractor`. Simulated
-routes therefore get the production checkpoint spacing (15 m) and beacon rule (start, turns over
-45°, destination) instead of a harness-local approximation — scenarios can override both via
-`checkpointSpacingMeters` and `turnThresholdDegrees`.
+routes therefore get the production checkpoint spacing (15 m) and beacon rule (start, windowed
+corners and provider maneuvers, destination) instead of a harness-local approximation — scenarios
+can override both via `checkpointSpacingMeters` and `turnThresholdDegrees`; leaving the latter out
+follows whatever `TurnPointExtractor` defaults to.
+
+The glove-pocket branch is covered where it touches the controller: the timeline accepts
+`headingUnavailable` (what `FirmwareGlove` emits when calibration or pointing setup is lost),
+`outputOff`/`outputOn` (`PointController.setOutputEnabled`) and `vehicleArrived`
+(`PointController.emit`, recorded as `haptic.cue` with the implemented `vehicleArrived` intent);
+frames carry `locationIssue` (missing / invalid / inaccurate / stale / nearby) next to `status`.
+A `silentBetween: { from, to }` expectation asserts no confirm pulse lands between two event kinds,
+which is how `heading-lost-goes-silent.json` pins the muted window.
+Orientation quaternions, `PointingCalibration` and `PocketMotionEstimator` sit inside
+`FirmwareGlove`, behind the `GloveTransport` boundary the harness replaces, so they are unit-tested
+in `PointCoreTests` rather than simulated here.
 
 ```sh
 swift run point-sim run --all          # traces + Markdown into .sim-out/

@@ -61,6 +61,18 @@ public enum Assertions {
                           noisy.isEmpty ? "silent after \(kind)"
                                         : "\(noisy.count) pulses after \(kind)")
 
+        case .silentBetween(let from, let to):
+            guard let start = events.first(where: { $0.kind == from }) else {
+                return result(.failed, "\(from) never happened")
+            }
+            guard let end = events.first(where: { $0.kind == to && $0.t >= start.t }) else {
+                return result(.failed, "\(to) never happened after \(from)")
+            }
+            let noisy = events.filter { $0.kind == "haptic.confirm" && $0.t > start.t && $0.t < end.t }
+            return result(noisy.isEmpty ? .passed : .failed,
+                          noisy.isEmpty ? String(format: "silent for %.1f s", end.t - start.t)
+                                        : "\(noisy.count) pulses between \(from) and \(to)")
+
         case .neverIntent(let intent):
             guard intent.isImplemented else {
                 return result(.passed, "\(intent.rawValue) is not part of the firmware contract yet")

@@ -18,15 +18,15 @@ public enum SyntheticRoute {
     public static func plan(destinationName: String,
                             steps: [SyntheticRouteStep],
                             checkpointIntervalMeters: Double = 15,
-                            turnThresholdDegrees: Double = 45) throws -> RoutePlan {
+                            turnThresholdDegrees: Double? = nil) throws -> RoutePlan {
         let records = steps.map { step in
             DirectionsStepRecord(htmlInstructions: step.instruction,
                                  coordinates: step.coordinates,
                                  distanceMeters: pathLengthMeters(step.coordinates))
         }
         let segmented = try RouteSegmenter(checkpointIntervalMeters: checkpointIntervalMeters).segment(steps: records)
-        let beacons = TurnPointExtractor(turnThresholdDegrees: turnThresholdDegrees)
-            .extract(checkpoints: segmented.checkpoints)
+        let extractor = turnThresholdDegrees.map { TurnPointExtractor(turnThresholdDegrees: $0) } ?? TurnPointExtractor()
+        let beacons = extractor.extract(checkpoints: segmented.checkpoints)
         return RoutePlan(destinationName: destinationName, checkpoints: segmented.checkpoints, beacons: beacons)
     }
 

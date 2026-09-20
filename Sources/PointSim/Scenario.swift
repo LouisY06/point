@@ -111,8 +111,9 @@ public struct RouteSpec: Codable {
     public var fixture: String?
     /// Checkpoint resampling interval handed to the production segmenter.
     public var checkpointSpacingMeters: Double
-    /// Turn angle above which the production extractor promotes a checkpoint to a beacon.
-    public var turnThresholdDegrees: Double
+    /// Turn angle above which the production extractor promotes a checkpoint to a beacon; omit
+    /// to use the extractor's own default, so scenarios follow the app when it is retuned.
+    public var turnThresholdDegrees: Double?
 
     enum CodingKeys: String, CodingKey {
         case kind, destinationName, coordinates, origin, legs, fixture, checkpointSpacingMeters,
@@ -128,7 +129,7 @@ public struct RouteSpec: Codable {
         legs = try container.decodeIfPresent([Leg].self, forKey: .legs)
         fixture = try container.decodeIfPresent(String.self, forKey: .fixture)
         checkpointSpacingMeters = try container.decodeIfPresent(Double.self, forKey: .checkpointSpacingMeters) ?? 15
-        turnThresholdDegrees = try container.decodeIfPresent(Double.self, forKey: .turnThresholdDegrees) ?? 45
+        turnThresholdDegrees = try container.decodeIfPresent(Double.self, forKey: .turnThresholdDegrees)
     }
 
     public func validate() throws {
@@ -144,7 +145,7 @@ public struct RouteSpec: Codable {
             guard checkpointSpacingMeters > 0 else {
                 throw ScenarioError.invalid("checkpointSpacingMeters must be positive")
             }
-            guard turnThresholdDegrees > 0, turnThresholdDegrees < 180 else {
+            guard turnThresholdDegrees.map({ $0 > 0 && $0 < 180 }) ?? true else {
                 throw ScenarioError.invalid("turnThresholdDegrees must be between 0 and 180")
             }
         case .fixture:
@@ -347,6 +348,13 @@ public struct ArmSpec: Codable {
 public struct TimelineEvent: Codable {
     public enum Action: String, Codable {
         case gesture, linkDisconnect, linkConnect, pause, resume, battery, stop
+        /// The glove reports it can no longer produce a heading (lost calibration or pointing setup)
+        /// and stops sending headings until `headingRestored`.
+        case headingUnavailable, headingRestored
+        /// `PointController.setOutputEnabled`, as the app does while speech or transit cues own the motor.
+        case outputOff, outputOn
+        /// The transit coordinator's out-of-band cue, sent through `PointController.emit`.
+        case vehicleArrived
     }
 
     public let at: Double

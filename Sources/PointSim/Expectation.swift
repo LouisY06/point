@@ -9,6 +9,7 @@ public enum Expectation: Codable {
     case noConfirmBefore(alignedWithinDegrees: Double)
     case eventOrder([String])
     case silentAfter(String)
+    case silentBetween(from: String, to: String)
     case neverIntent(HapticIntent)
     case requiresIntent(HapticIntent)
 
@@ -20,6 +21,7 @@ public enum Expectation: Codable {
         case .noConfirmBefore: return "noConfirmBefore"
         case .eventOrder: return "eventOrder"
         case .silentAfter: return "silentAfter"
+        case .silentBetween: return "silentBetween"
         case .neverIntent: return "neverIntent"
         case .requiresIntent: return "requiresIntent"
         }
@@ -37,6 +39,7 @@ public enum Expectation: Codable {
             return "no confirm pulse outside \(Int(degrees))°"
         case .eventOrder(let kinds): return "event order \(kinds.joined(separator: " → "))"
         case .silentAfter(let kind): return "silent after \(kind)"
+        case .silentBetween(let from, let to): return "silent between \(from) and \(to)"
         case .neverIntent(let intent): return "never \(intent.rawValue)"
         case .requiresIntent(let intent): return "requires \(intent.rawValue)"
         }
@@ -64,6 +67,11 @@ public enum Expectation: Codable {
         let alignedWithinDegrees: Double
     }
 
+    private struct Window: Codable {
+        let from: String
+        let to: String
+    }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: Key.self)
         guard let key = container.allKeys.first, container.allKeys.count == 1 else {
@@ -85,6 +93,9 @@ public enum Expectation: Codable {
             self = .eventOrder(try container.decode([String].self, forKey: key))
         case "silentAfter":
             self = .silentAfter(try container.decode(String.self, forKey: key))
+        case "silentBetween":
+            let value = try container.decode(Window.self, forKey: key)
+            self = .silentBetween(from: value.from, to: value.to)
         case "neverIntent":
             self = .neverIntent(try container.decode(HapticIntent.self, forKey: key))
         case "requiresIntent":
@@ -109,6 +120,8 @@ public enum Expectation: Codable {
             try container.encode(kinds, forKey: Key("eventOrder"))
         case .silentAfter(let kind):
             try container.encode(kind, forKey: Key("silentAfter"))
+        case .silentBetween(let from, let to):
+            try container.encode(Window(from: from, to: to), forKey: Key("silentBetween"))
         case .neverIntent(let intent):
             try container.encode(intent, forKey: Key("neverIntent"))
         case .requiresIntent(let intent):

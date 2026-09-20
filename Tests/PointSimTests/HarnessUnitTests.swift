@@ -66,7 +66,7 @@ struct HarnessUnitTests {
         // Start and destination only: a straight leg has no turn to ping on.
         let straight = try beacons(legs: #"[{"bearing": 0, "meters": 120}]"#)
         #expect(straight.count == 2)
-        // A shallow bend stays below the 45° extractor threshold.
+        // A shallow bend stays below the extractor's turn threshold.
         let bend = try beacons(legs: #"[{"bearing": 0, "meters": 120}, {"bearing": 20, "meters": 120}]"#)
         #expect(bend.count == 2)
         // A real corner earns its own beacon between start and destination.
@@ -91,9 +91,9 @@ struct HarnessUnitTests {
     }
 
     @Test func reservedIntentsAreNotClaimedAsImplemented() {
-        #expect(HapticIntent.confirmAlignment.isImplemented)
-        #expect(HapticIntent.stop.isImplemented)
-        for intent in HapticIntent.allCases where intent != .confirmAlignment && intent != .stop {
+        let implemented: Set<HapticIntent> = [.confirmAlignment, .stop, .vehicleArrived]
+        for intent in implemented { #expect(intent.isImplemented) }
+        for intent in HapticIntent.allCases where !implemented.contains(intent) {
             #expect(!intent.isImplemented, "\(intent.rawValue) has no firmware opcode yet")
         }
     }

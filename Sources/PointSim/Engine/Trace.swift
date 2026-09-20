@@ -39,6 +39,8 @@ public struct Trace: Codable {
         public let connection: String
         public let beaconIndex: Int
         public let status: String
+        /// Why `status` is `locationUnavailable`, when it is: missing, invalid, inaccurate, stale, nearby.
+        public let locationIssue: String?
         public let errorDegrees: Double?
         public let conservativeDegrees: Double?
         public let distanceMeters: Double?
