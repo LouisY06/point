@@ -31,6 +31,9 @@ import UIKit
     // no mode switch: a short walk just walks, a long one asks "T or walk?", and the utterance can decide.
     static let offerTransitAboveMinutes = 10.0
     @Published private(set) var journeyCandidates: [JourneyPlan] = []
+    /// Push to talk: the finger is on the microphone, and the current capture ends on release, not on a pause.
+    private var microphoneHeld = false
+    private var holdToTalkActive = false
     @Published private(set) var journeyPlan: JourneyPlan?
     @Published private(set) var journeyPhase: JourneyCoordinator.Phase = .idle
     @Published private(set) var transitCountdown: JourneyCoordinator.Countdown?
@@ -137,7 +140,8 @@ import UIKit
             transcript = text
         }.store(in: &subscriptions)
         recorder.$endpoint.sink { [weak self] endpoint in
-            guard let self, stage == .recording, !isDemo else { return }
+            // Holding the microphone decides the end; pauses mid-sentence are the rider's to take.
+            guard let self, stage == .recording, !isDemo, !holdToTalkActive else { return }
             switch endpoint {
             case .listening: break
             case .finished: finishRecording()
@@ -224,26 +228,45 @@ import UIKit
         }
     }
 
+    /// VoiceOver's activation: tap to start, tap again to finish, and the pause detector also finishes.
     func microphone() {
-        startListening(automatically: false)
+        startListening(automatically: false, holdToTalk: false)
     }
 
-    private func startListening(automatically: Bool) {
+    /// Finger down on the microphone: record until `releaseMicrophone`, however long the pauses.
+    func holdMicrophone() {
+        guard stage != .recording else { return }
+        microphoneHeld = true
+        startListening(automatically: false, holdToTalk: true)
+    }
+
+    func releaseMicrophone() {
+        microphoneHeld = false
+        // A release before capture started is handled when the start task resumes.
+        if stage == .recording, holdToTalkActive { finishRecording() }
+    }
+
+    private func startListening(automatically: Bool, holdToTalk: Bool) {
         guard !demoInFlight, UIApplication.shared.applicationState == .active else { return }
         if stage == .recording { finishRecording(); return }
         guard stage != .searching else { return }
         work?.cancel()
         stopSpokenReply()
         transcript = ""
+        holdToTalkActive = holdToTalk
         work = Task {
             do {
                 try await recorder.start()
                 guard !Task.isCancelled, UIApplication.shared.applicationState == .active else { recorder.cancel(); return }
+                // A tap too short for capture to start: nothing was said, so do not search.
+                guard !holdToTalk || microphoneHeld else { recorder.cancel(); return }
                 stage = .recording
                 // Do not play generated speech into our own recording.
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                 if !automatically {
-                    UIAccessibility.post(notification: .announcement, argument: "Listening. Say a destination. I'll finish when you pause.")
+                    UIAccessibility.post(notification: .announcement, argument: holdToTalk
+                                         ? "Listening. Say a destination, then let go."
+                                         : "Listening. Say a destination. I'll finish when you pause.")
                 }
                 recordingLimit = Task {
                     try? await Task.sleep(for: .seconds(60))
@@ -974,7 +997,7 @@ import UIKit
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled, let self, self.stage == expectedStage,
                   UIApplication.shared.applicationState == .active else { return }
-            self.startListening(automatically: true)
+            self.startListening(automatically: true, holdToTalk: false)
         }
     }
 
@@ -984,6 +1007,8 @@ import UIKit
         let expectedStage = stage
         let finished: () -> Void = { [weak self] in
             guard listensForReply, expectedStage == .clarifying || expectedStage == .choosing else { return }
+            // Only VoiceOver gets a hands-free reply; everyone else holds the microphone to answer.
+            guard UIAccessibility.isVoiceOverRunning else { return }
             self?.listenAfterReply(expectedStage: expectedStage)
         }
         if UIAccessibility.isVoiceOverRunning {

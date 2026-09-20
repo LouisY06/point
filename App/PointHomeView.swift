@@ -152,8 +152,9 @@ private struct PointHomeContent: View {
                         declineTitle: model.pendingTransitOffer ? "I'll walk" : "Change destination",
                         onConfirm: { model.confirmDestination() },
                         onDecline: { model.declineDestination() },
-                        onSpeak: { model.microphone() },
-                        onFinish: { model.microphone() },
+                        onSpeak: { model.holdMicrophone() },
+                        onFinish: { model.releaseMicrophone() },
+                        onToggle: { model.microphone() },
                         onCancel: { model.cancel() },
                         onType: { model.prepareTypedReply(); typedDestination = ""; showTyping = true },
                         onVoiceCenter: { if model.stage != .route { voiceCenter = $0 } }
@@ -417,7 +418,9 @@ private struct PointHomeContent: View {
             List {
                 Section { Text(model.transcript).foregroundStyle(.secondary).accessibilityLabel("You said: \(model.transcript)") }
                 Section {
-                    Button { model.microphone() } label: { Label("Reply by voice", systemImage: "mic.fill") }
+                    Button { model.microphone() } label: { Label("Hold to reply by voice", systemImage: "mic.fill") }
+                        .buttonStyle(HoldToTalkStyle(onPress: { model.holdMicrophone() }, onRelease: { model.releaseMicrophone() }))
+                        .accessibilityLabel("Reply by voice")
                 }
                 if model.candidates.isEmpty {
                     ContentUnavailableView.search(text: model.transcript)

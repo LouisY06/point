@@ -14,8 +14,12 @@ struct HandVoiceInteraction: View {
     var declineTitle = "Change destination"
     let onConfirm: () -> Void
     let onDecline: () -> Void
+    /// Finger down on the microphone.
     let onSpeak: () -> Void
+    /// Finger lifted: the recording ends here, not on a pause.
     let onFinish: () -> Void
+    /// VoiceOver activation: one tap starts, another finishes.
+    let onToggle: () -> Void
     let onCancel: () -> Void
     let onType: () -> Void
     let onVoiceCenter: (CGPoint) -> Void
@@ -53,18 +57,19 @@ struct HandVoiceInteraction: View {
                     .allowsHitTesting(active && motion.finished)
                     .accessibilityHidden(!active || !motion.finished)
 
-                Button(action: onSpeak) {
+                // Hold to talk: the button stays under the finger while the hand animation plays over it.
+                Button(action: onToggle) {
                     GloveOutline()
                         .frame(width: posterRect.width * scale, height: posterRect.height * scale)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HoldToTalkStyle(onPress: onSpeak, onRelease: onFinish))
                 .position(x: posterRect.midX * scale, y: posterRect.midY * scale)
                 .opacity(!active || (!motion.frameReady && !motion.finished) ? 1 : 0)
-                .allowsHitTesting(!active)
+                .allowsHitTesting(!active || listening)
                 .accessibilityHidden(active)
                 .accessibilityLabel("Speak to Point")
-                .accessibilityHint("Say a destination or enter demo mode. Recording ends when you pause.")
+                .accessibilityHint("Say a destination or enter demo mode. Double-tap again to finish, or pause.")
 
                 if let displayedFrame, active {
                     Image(decorative: displayedFrame.image, scale: 1)
@@ -90,18 +95,21 @@ struct HandVoiceInteraction: View {
                     .accessibilityLabel("Type a destination instead")
                     if active {
                         if listening && !isDemo {
-                            Button("Finish", action: onFinish).frame(minHeight: 48)
+                            Text("Let go when you're done").font(.subheadline).frame(minHeight: 48)
+                                .foregroundStyle(.white.opacity(0.8)).accessibilityHidden(true)
                         } else if prompt != nil {
-                            Button(action: onSpeak) {
-                                Label("Reply", systemImage: "mic.fill").frame(minHeight: 48)
+                            Button(action: onToggle) {
+                                Label("Hold to reply", systemImage: "mic.fill").frame(minHeight: 48)
                             }
-                            .accessibilityHint("Speak an answer or a different destination")
+                            .buttonStyle(HoldToTalkStyle(onPress: onSpeak, onRelease: onFinish))
+                            .accessibilityLabel("Reply")
+                            .accessibilityHint("Speak an answer or a different destination. Double-tap again to finish, or pause.")
                         } else if !isDemo && !searching {
                             Button("Finish", action: onFinish).frame(minHeight: 48)
                         }
                         Button(role: .cancel, action: onCancel) { Text("Cancel").frame(minHeight: 48) }
                     } else {
-                        Text("Tap to speak").font(.subheadline).foregroundStyle(.white.opacity(0.8))
+                        Text("Hold to speak").font(.subheadline).foregroundStyle(.white.opacity(0.8))
                             .accessibilityHidden(true)
                     }
                     }
@@ -193,6 +201,22 @@ struct HandVoiceInteraction: View {
         .padding(.horizontal, 28)
         .padding(.vertical, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+}
+
+/// Push to talk on any button: finger down starts, finger up (or a cancelled touch) finishes.
+/// VoiceOver activates the button's own action instead, so it keeps tap-to-start, tap-to-finish.
+struct HoldToTalkStyle: ButtonStyle {
+    let onPress: () -> Void
+    let onRelease: () -> Void
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                guard !UIAccessibility.isVoiceOverRunning else { return }
+                if pressed { onPress() } else { onRelease() }
+            }
     }
 }
 
