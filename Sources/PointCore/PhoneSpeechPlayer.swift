@@ -75,16 +75,15 @@ import Foundation
     }
 
     private func activateSession() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback, mode: .voicePrompt, options: [.duckOthers])
-        try session.setActive(true)
+        guard !ownsSession else { return }
+        try AudioSessionCoordinator.shared.acquire(.speaking)
         ownsSession = true
     }
 
     private func deactivateSession() {
         guard ownsSession else { return }
         ownsSession = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        AudioSessionCoordinator.shared.release(.speaking)
     }
 
     nonisolated public func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
@@ -104,7 +103,8 @@ import Foundation
     private func finishPlayback(successfully succeeded: Bool) {
         let finished = completion
         progress?(fullText)
-        // Release the output audio session before a completion callback starts microphone input.
+        // Release the speaking hold before a completion callback starts microphone input. A
+        // running haptic engine keeps its own hold, so this no longer tears the session down.
         stop()
         finished?(succeeded)
     }
