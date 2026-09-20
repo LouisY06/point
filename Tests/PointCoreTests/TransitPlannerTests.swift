@@ -140,6 +140,7 @@ import Testing
         #expect(best.rides[0].alight.id == "place-pktrm" && best.rides[1].board.id == "place-pktrm" && best.rides[1].alight.id == "place-coecl")
         #expect(best.legs.count == 5)
         #expect(plans.filter { $0.rides.last?.route.id.hasPrefix("Green") == true }.count == 1) // One plan per line pair, best board stop.
+        #expect(plans.map(\.estimatedSeconds) == plans.map(\.estimatedSeconds).sorted()) // Fastest first; the app takes plans[0].
         guard case .transfer(let station) = best.legs[2] else { Issue.record("expected transfer leg"); return }
         #expect(station.id == "place-pktrm")
         #expect(best.summary.contains("then change to the Green Line toward Boston College or Cleveland Circle"))
@@ -254,7 +255,7 @@ import Testing
             let before = client.callCount
             let plans = try await TransitPlanner.plan(from: kendall, to: target, destinationName: name, walking: AppleMapsService(), transit: client)
             print("== \(name): \(plans.count) plans, \(client.callCount - before) MBTA calls")
-            for plan in plans { print("  -", plan.summary) }
+            for plan in plans { print("  - \(Int(plan.estimatedSeconds / 60)) min:", plan.summary) }
             #expect(!plans.isEmpty)
             #expect(plans.first?.isWalkingOnly == false, "expected a ride to \(name)")
             #expect(client.callCount - before <= 8)

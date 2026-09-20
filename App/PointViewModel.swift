@@ -559,13 +559,9 @@ import UIKit
                          : "That's close enough to walk. \(NavigationSpeech.routeReady(for: place))")
                 return
             }
-            journeyCandidates = plans
+            // Plans arrive fastest first; take it rather than asking the rider to compare routes.
             pendingJourneyPlace = place
-            pendingRoute = nil
-            followUpPrompt = nil
-            candidates = []
-            stage = .journeyChoice
-            announce("Here's a route by transit. \(plans[0].summary) Tap it to confirm, or pick another.")
+            selectJourney(plans[0])
         } catch {
             guard !Task.isCancelled else { return }
             ask("I couldn't plan a transit trip there. Which place would you like to try instead?")
