@@ -46,7 +46,7 @@ public struct PointingCalibration: Codable {
         fileprivate let finger: SIMD3<Double>
         fileprivate let direction: PoseDirection
         fileprivate let spread: Double
-        fileprivate let timestamp: Date
+        let timestamp: Date
     }
     public let finger: SIMD3<Double>
     /// Operational budget: measured mount repeatability plus a provisional 5°
@@ -138,26 +138,62 @@ public struct PointingCalibration: Codable {
 /// The Bluetooth identifier prevents applying one glove's mounting to another glove.
 public final class PointingCalibrationStore {
     private let defaults: UserDefaults
-    public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    private let directory: URL?
+    public init(defaults: UserDefaults = .standard, directory: URL? = nil) {
+        self.defaults = defaults
+        self.directory = directory
+    }
     private func key(_ deviceID: UUID) -> String { "point.glove-mount.v1.\(deviceID.uuidString)" }
-    public func save(_ calibration: PointingCalibration, for deviceID: UUID) {
-        guard let data = try? JSONEncoder().encode(calibration) else { return }
+    private func file(_ deviceID: UUID) -> URL? { directory?.appendingPathComponent("\(deviceID.uuidString).json") }
+
+    /// Commit and verify before the UI reports success or publishes the live mapping.
+    /// The app uses an atomic file as well as the legacy preferences copy so a
+    /// completed capture does not depend on a deferred preferences flush.
+    @discardableResult public func save(_ calibration: PointingCalibration, for deviceID: UUID) -> Bool {
+        guard let data = try? JSONEncoder().encode(calibration),
+              (try? JSONDecoder().decode(PointingCalibration.self, from: data)) != nil else { return false }
+        if let directory, let file = file(deviceID) {
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try data.write(to: file, options: .atomic)
+                guard try Data(contentsOf: file) == data else { return false }
+            } catch { return false }
+        }
         defaults.set(data, forKey: key(deviceID))
+        return defaults.data(forKey: key(deviceID)) == data
     }
     public func load(for deviceID: UUID) -> PointingCalibration? {
-        guard let data = defaults.data(forKey: key(deviceID)) else { return nil }
-        return try? JSONDecoder().decode(PointingCalibration.self, from: data)
+        if let file = file(deviceID), FileManager.default.fileExists(atPath: file.path) {
+            guard let data = try? Data(contentsOf: file) else { return nil }
+            return try? JSONDecoder().decode(PointingCalibration.self, from: data)
+        }
+        guard let data = defaults.data(forKey: key(deviceID)),
+              let saved = try? JSONDecoder().decode(PointingCalibration.self, from: data) else { return nil }
+        if directory != nil { save(saved, for: deviceID) } // Migrate existing completed setups.
+        return saved
     }
     /// Older builds saved the mounting map but not the last connection. Migrate only
     /// when exactly one valid glove is identifiable; never guess among multiple gloves.
     public var onlySavedDeviceID: UUID? {
         let prefix = "point.glove-mount.v1."
-        let devices = defaults.dictionaryRepresentation().keys.compactMap { key -> UUID? in
+        var candidates = Set(defaults.dictionaryRepresentation().keys.compactMap { key -> UUID? in
             guard key.hasPrefix(prefix), let id = UUID(uuidString: String(key.dropFirst(prefix.count))),
                   load(for: id) != nil else { return nil }
             return id
+        })
+        if let directory, let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+            for file in files where file.pathExtension == "json" {
+                if let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent), load(for: id) != nil { candidates.insert(id) }
+            }
         }
-        return devices.count == 1 ? devices[0] : nil
+        return candidates.count == 1 ? candidates.first : nil
     }
-    public func remove(for deviceID: UUID) { defaults.removeObject(forKey: key(deviceID)) }
+    @discardableResult public func remove(for deviceID: UUID) -> Bool {
+        if let file = file(deviceID), FileManager.default.fileExists(atPath: file.path) {
+            do { try FileManager.default.removeItem(at: file) }
+            catch { return false }
+        }
+        defaults.removeObject(forKey: key(deviceID))
+        return true
+    }
 }
