@@ -74,10 +74,15 @@ struct RouteMapView: View {
     var phoneLocation: CLLocation?
     var journey: JourneyPlan?
     var journeyLegIndex: Int?
-    @ObservedObject var telemetry: RouteMapTelemetry
+    /// Not observed here: only the direction marker redraws on a compass sample. Re-evaluating the
+    /// map content ten times a second re-diffs every polyline, which shows as flashing lines.
+    let telemetry: RouteMapTelemetry
     @State private var drawing: RouteMapDrawing
     @State private var position: MapCameraPosition = .automatic
     @State private var mapHeading: Double = 0
+    /// The marker's position, updated only when the fix moved or its quality changed, so GPS jitter
+    /// at one fix per second does not re-diff the whole map.
+    @State private var markerLocation: CLLocation?
 
     init(route: RoutePlan, activeBeaconIndex: Int?, phoneLocation: CLLocation?, telemetry: RouteMapTelemetry,
          journey: JourneyPlan? = nil, journeyLegIndex: Int? = nil) {
@@ -106,9 +111,9 @@ struct RouteMapView: View {
 
     var body: some View {
         Map(position: $position) {
-            if let location = phoneLocation, location.horizontalAccuracy >= 0, location.horizontalAccuracy <= 25 {
+            if let location = markerLocation, location.horizontalAccuracy >= 0, location.horizontalAccuracy <= 25 {
                 Annotation("Your pointing direction", coordinate: location.coordinate, anchor: .center) {
-                    PhoneDirectionAnnotation(heading: telemetry.heading, location: location, mapHeading: mapHeading)
+                    PhoneDirectionAnnotation(telemetry: telemetry, location: location, mapHeading: mapHeading)
                 }
             } else { UserAnnotation() }
             // Every other walking leg, with its beacons in the normal style, faded once passed.
@@ -171,7 +176,15 @@ struct RouteMapView: View {
         .onMapCameraChange(frequency: .continuous) {
             if abs(mapHeading - $0.camera.heading) > 0.2 { mapHeading = $0.camera.heading }
         }
-        .onAppear { position = .region(drawing.region) }
+        .onAppear { position = .region(drawing.region); markerLocation = phoneLocation }
+        .onChange(of: phoneLocation) { _, fix in
+            guard let fix else { markerLocation = nil; return }
+            guard let shown = markerLocation else { markerLocation = fix; return }
+            let moved = fix.distance(from: shown) >= 3
+            let usable = { (l: CLLocation) in l.horizontalAccuracy >= 0 && l.horizontalAccuracy <= 25 }
+            // A stale timestamp also matters: the marker greys out after five seconds without a fix.
+            if moved || usable(fix) != usable(shown) || fix.timestamp.timeIntervalSince(shown.timestamp) >= 4 { markerLocation = fix }
+        }
         .onChange(of: journeyLegIndex) { _, index in
             // Update passed-leg styling without rebuilding the map or resetting the user's camera.
             drawing = RouteMapDrawing(route: route, journey: journey, legIndex: index)
@@ -208,12 +221,13 @@ extension Color {
 
 /// Only this small marker has a freshness timer; route lines and all other markers stay unchanged.
 private struct PhoneDirectionAnnotation: View {
-    let heading: HeadingReading?
+    @ObservedObject var telemetry: RouteMapTelemetry
     let location: CLLocation
     let mapHeading: Double
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.25)) { clock in
+            let heading = telemetry.heading
             let freshLocation = (0...5).contains(clock.date.timeIntervalSince(location.timestamp))
             if freshLocation, let heading, heading.degrees >= 0, heading.degrees < 360,
                (0...25).contains(heading.accuracyDegrees),
