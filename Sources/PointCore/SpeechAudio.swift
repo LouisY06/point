@@ -33,25 +33,4 @@ public struct SpeechAudio {
         }
         return SpeechAudio(data: data, text: text, words: cues)
     }
-
-    public static func wordCues(characters: [String], starts: [Double]) throws -> [WordCue] {
-        guard !characters.isEmpty, characters.count == starts.count,
-              starts.allSatisfy({ $0.isFinite && $0 >= 0 }), zip(starts, starts.dropFirst()).allSatisfy({ $0 <= $1 }) else {
-            throw ServiceError.invalidResponse
-        }
-        var cues: [WordCue] = []
-        var prefix = ""
-        var wordStart: Double?
-        for (character, time) in zip(characters, starts) {
-            let whitespace = character.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            if whitespace, let start = wordStart {
-                cues.append(WordCue(seconds: start, prefix: prefix.trimmingCharacters(in: .whitespacesAndNewlines)))
-                wordStart = nil
-            } else if !whitespace, wordStart == nil { wordStart = time }
-            prefix += character
-        }
-        if let wordStart { cues.append(WordCue(seconds: wordStart, prefix: prefix.trimmingCharacters(in: .whitespacesAndNewlines))) }
-        guard !cues.isEmpty else { throw ServiceError.invalidResponse }
-        return cues
-    }
 }

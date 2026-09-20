@@ -19,20 +19,19 @@ struct VoiceConfigurationTests {
     }
 
     @Test func readsQuotedValuesAndEnvironmentOverridesWithoutTreatingBlankAsAKey() {
-        let configuration = VoiceConfiguration(environment: ["OPENAI_API_KEY": "environment-key", "ELEVENLABS_API_KEY": ""], fileContents: """
+        let configuration = VoiceConfiguration(environment: ["OPENAI_API_KEY": "environment-key", "DEEPGRAM_API_KEY": ""], fileContents: """
             # ignored
             export OPENAI_API_KEY = "file-key"
-            ELEVENLABS_API_KEY = 'test-key' # comment
+            DEEPGRAM_API_KEY = 'test-key' # comment
             DEEPGRAM_VOICE_SPEED=0.9 # comment
-            ELEVENLABS_MODEL_ID=eleven_flash_v2_5
             """)
         #expect(configuration.openAIKey == "environment-key")
-        #expect(configuration.elevenLabsKey == "test-key")
+        #expect(configuration.deepgramKey == "test-key")
         #expect(configuration.speed == 0.9)
-        #expect(VoiceConfiguration(fileContents: "ELEVENLABS_API_KEY=  ").elevenLabsKey == nil)
+        #expect(VoiceConfiguration(fileContents: "DEEPGRAM_API_KEY=  ").deepgramKey == nil)
         #expect(VoiceConfiguration(fileContents: "DEEPGRAM_VOICE_SPEED=nan").speed == 0.95)
-        #expect(VoiceConfiguration(fileContents: "ELEVENLABS_VOICE_SPEED=1.1").speed == 1.1) // legacy name still honoured
-        #expect(VoiceConfiguration(fileContents: "DEEPGRAM_VOICE_SPEED=1.2\nELEVENLABS_VOICE_SPEED=0.8").speed == 1.2)
+        #expect(VoiceConfiguration(fileContents: "DEEPGRAM_VOICE_SPEED=1.1").speed == 1.1)
+        #expect(VoiceConfiguration(fileContents: "DEEPGRAM_VOICE_SPEED=9").speed == 1.2) // clamped
     }
 }
 
@@ -156,77 +155,5 @@ struct VoiceConfigurationTests {
         service.finish("Try another place.", error: ServiceError.http(401))
         for _ in 0..<20 { await Task.yield() }
         #expect(player.outputs == ["system: Try another place."])
-    }
-}
-
-private final class SpeechURLProtocol: URLProtocol, @unchecked Sendable {
-    // The suite below is serialized; no other session uses this protocol.
-    nonisolated(unsafe) static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() {
-        do {
-            let (response, data) = try Self.handler!(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch { client?.urlProtocol(self, didFailWithError: error) }
-    }
-    override func stopLoading() {}
-}
-
-@Suite(.serialized) @MainActor struct ElevenLabsSpeechTests {
-    private func client() -> ElevenLabsSpeech {
-        let session = URLSessionConfiguration.ephemeral
-        session.protocolClasses = [SpeechURLProtocol.self]
-        return ElevenLabsSpeech(configuration: VoiceConfiguration(environment: ["ELEVENLABS_API_KEY": "test-key"]),
-                                session: URLSession(configuration: session))
-    }
-
-    @Test func sendsConfiguredVoiceAndReturnsMP3() async throws {
-        SpeechURLProtocol.handler = { request in
-            #expect(request.httpMethod == "POST")
-            #expect(request.url?.lastPathComponent == "with-timestamps")
-            #expect(request.url?.deletingLastPathComponent().lastPathComponent == VoiceConfiguration.recommendedVoiceID)
-            #expect(request.url?.query == "output_format=mp3_44100_128")
-            #expect(request.value(forHTTPHeaderField: "xi-api-key") == "test-key")
-            #expect(request.url?.absoluteString.contains("test-key") == false)
-            var body = request.httpBody ?? Data()
-            if let stream = request.httpBodyStream {
-                stream.open()
-                defer { stream.close() }
-                var buffer = [UInt8](repeating: 0, count: 4096)
-                while stream.hasBytesAvailable {
-                    let count = stream.read(&buffer, maxLength: buffer.count)
-                    guard count > 0 else { break }
-                    body.append(buffer, count: count)
-                }
-            }
-            let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
-            #expect(json["text"] as? String == "Route ready.")
-            #expect(json["model_id"] as? String == "eleven_flash_v2_5")
-            #expect((json["voice_settings"] as? [String: Any])?["speed"] as? Double == 0.95)
-            let response = try JSONSerialization.data(withJSONObject: [
-                "audio_base64": Data("ID3audio".utf8).base64EncodedString(),
-                "alignment": ["characters": Array("Route ready.").map(String.init),
-                              "character_start_times_seconds": (0..<12).map { Double($0) / 10 }]
-            ])
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
-                                    headerFields: ["Content-Type": "application/json"])!, response)
-        }
-        let speech = try await client().synthesize("Route ready.")
-        #expect(speech.data == Data("ID3audio".utf8))
-        #expect(speech.visibleText(at: 0.2) == "Route")
-        #expect(speech.visibleText(at: 0.7) == "Route ready.")
-    }
-
-    @Test func rejectsErrorBodiesAndNonAudioSuccessResponses() async {
-        for status in [401, 429, 500, 200] {
-            SpeechURLProtocol.handler = { request in
-                (HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil,
-                                 headerFields: ["Content-Type": "application/json"])!, Data("{}".utf8))
-            }
-            await #expect(throws: (any Error).self) { try await client().synthesize("Route ready.") }
-        }
     }
 }

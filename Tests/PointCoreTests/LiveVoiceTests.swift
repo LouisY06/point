@@ -12,10 +12,11 @@ import Testing
     @Test(.enabled(if: ProcessInfo.processInfo.environment["POINT_LIVE_SPEECH_CHECK"] == "1"))
     func generatesShortReplyThroughProductionClient() async throws {
         let path = try #require(ProcessInfo.processInfo.environment["POINT_SPEECH_SAMPLE_PATH"])
-        let speech = ElevenLabsSpeech(configuration: try configuration())
+        let speech = DeepgramSpeech(configuration: try configuration())
         let data = try await speech.synthesize("Your route to Shake Shack on Cambridge Street is ready. Tap Start when you're ready.")
         #expect(data.data.count > 1_000)
-        #expect(data.words.count > 10)
+        // Flux returns no word timings; captions are estimated from the audio length at playback.
+        #expect(data.withEstimatedCues(duration: 4).words.count > 10)
         try data.data.write(to: URL(fileURLWithPath: path), options: .atomic)
     }
 
