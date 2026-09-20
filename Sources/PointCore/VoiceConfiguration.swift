@@ -38,7 +38,8 @@ public struct VoiceConfiguration {
         elevenLabsKey = value("ELEVENLABS_API_KEY")
         voiceID = value("ELEVENLABS_VOICE_ID") ?? Self.recommendedVoiceID
         speechModel = value("ELEVENLABS_MODEL_ID") ?? "eleven_flash_v2_5"
-        let requestedSpeed = value("ELEVENLABS_VOICE_SPEED").flatMap(Double.init) ?? 0.95
+        // One delivery speed for whichever voice is configured; the old ElevenLabs name still works.
+        let requestedSpeed = (value("DEEPGRAM_VOICE_SPEED") ?? value("ELEVENLABS_VOICE_SPEED")).flatMap(Double.init) ?? 0.95
         speed = requestedSpeed.isFinite ? min(1.2, max(0.7, requestedSpeed)) : 0.95
         mbtaKey = value("MBTA_API_KEY")
         deepgramKey = value("DEEPGRAM_API_KEY")
