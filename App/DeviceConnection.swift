@@ -29,6 +29,7 @@ import PointCore
     @Published private(set) var calibrationLevels = "Waiting for sensor readings"
     @Published private(set) var capturingPose = false
     @Published private(set) var hasFirstPose = false
+    @Published private(set) var hasPendingCalibration = false
     @Published private(set) var pointingReady = false
     @Published private(set) var orientationSupported = false
     @Published private(set) var sensorReady = false
@@ -38,14 +39,15 @@ import PointCore
     let glove = FirmwareGlove()
     var keepsDemoRunningInBackground = false
     var onDemoReading: (() -> Void)?
-    private let mountingStore = PointingCalibrationStore()
+    private let mountingStore = PointingCalibrationStore(
+        directory: URL.applicationSupportDirectory.appendingPathComponent("GlovePointing", isDirectory: true))
     private let connectionMemory = GloveConnectionMemory()
     private var reconnectTask: Task<Void, Never>?
     private var reconnectDelay = 2.0
     private var automaticAttempt = false
     private var choosingDevice = false
-    private var firstPose: PointingCalibration.Pose?
-    private var observations: [GloveOrientationSample] = []
+    private var pointingSetup = PointingSetupSession()
+    private(set) var lastCaptureOutcome = "none"
     private var captureTask: Task<Void, Never>?
     private var setupOpen = false
     private var firmwareLoop: Task<Void, Never>?
@@ -108,10 +110,16 @@ import PointCore
     }
 
     private func updateCalibration() {
+        if let id = peripheral?.identifier { pointingSetup.prepare(for: id) }
+        if capturingPose, !pointingSetup.isCapturing {
+            cancelCapture()
+            reportCapture("expired", "The first pose expired. Capture the downward pose again.")
+        }
+        syncCaptureState()
         let wasReady = sensorReady
         let setupBlock = glove.pointingSetupBlockingReason()
         let usable = setupBlock == nil
-        if !capturingPose, firstPose == nil, let id = peripheral?.identifier,
+        if !capturingPose, !hasFirstPose, !hasPendingCalibration, let id = peripheral?.identifier,
            glove.restorePointingCalibration(from: mountingStore, for: id) {
             // Restoration publishes a change; nested updates see the loaded mapping.
             calibrationStatus = "Finger direction saved. Repeat setup only if the sensor moves on the glove."
@@ -125,76 +133,103 @@ import PointCore
             if calibrationLevels != levels { calibrationLevels = levels }
         }
         if !usable {
-            firstPose = nil
-            if hasFirstPose { hasFirstPose = false }
             if capturingPose { cancelCapture() }
             let reason = setupBlock ?? "Connect your glove to begin."
-            let status = ready ? "Finger direction saved. \(reason)" : reason
+            let status = ready ? "Finger direction saved. \(reason)"
+                : hasPendingCalibration ? "Both poses captured. Reconnect to save your pointing setup."
+                : hasFirstPose ? "Downward pose kept. \(reason)" : reason
             if calibrationStatus != status { calibrationStatus = status }
             return
         }
-        if !wasReady, firstPose == nil {
+        if !wasReady {
             calibrationStatus = ready
                 ? "Finger direction saved. Raise your hand and point forward."
+                : hasPendingCalibration ? "Both poses captured. Tap Save pointing setup."
+                : hasFirstPose ? "Downward pose kept. Point your finger up and capture the second pose."
                 : "Glove ready. Point your finger straight down and capture the first pose."
         }
-        guard capturingPose, let sample = glove.orientation,
-              observations.last?.timestamp != sample.timestamp else { return }
-        observations.append(sample)
-        if observations.count > 30 { observations.removeFirst() }
+        if capturingPose, let sample = glove.orientation { pointingSetup.append(sample) }
     }
 
     func capturePose() {
-        guard setupOpen, !capturingPose, glove.pointingSetupBlockingReason() == nil else { return }
-        if firstPose == nil {
-            if let id = peripheral?.identifier { mountingStore.remove(for: id) }
-            glove.resetPointingCalibration()
-        }
-        observations = []
+        guard setupOpen, !capturingPose, let deviceID = peripheral?.identifier,
+              glove.pointingSetupBlockingReason() == nil else { return }
+        if pointingSetup.pendingCalibration != nil { saveCapturedCalibration(for: deviceID); return }
+        guard let captureID = pointingSetup.begin(for: deviceID) else { return }
+        syncCaptureState()
         capturingPose = true
-        calibrationStatus = "Hold your glove still for two seconds…"
+        lastCaptureOutcome = hasFirstPose ? "capturingUp" : "capturingDown"
+        calibrationStatus = "Hold your glove still until this measurement finishes…"
         captureTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(2.5)) } catch { return }
-            guard let self, !Task.isCancelled else { return }
+            guard let self, !Task.isCancelled, self.peripheral?.identifier == deviceID,
+                  let outcome = pointingSetup.finish(captureID) else { return }
             capturingPose = false
-            guard let pose = PointingCalibration.capture(observations, direction: firstPose == nil ? .down : .up, now: Date()) else {
-                calibrationStatus = "Couldn’t get a steady glove reading. Keep your finger straight in the requested pose and hold the glove still, then retry."
-                return
-            }
-            if let firstPose {
-                guard let calibration = PointingCalibration(first: firstPose, second: pose) else {
-                    calibrationStatus = "The poses didn’t agree. Point the same straight finger directly upward and hold still. Keep the sensor fixed on your glove. Retry, or start over."
-                    return
-                }
-                glove.calibrate(calibration)
-                if let id = peripheral?.identifier { mountingStore.save(calibration, for: id) }
-                self.firstPose = nil; hasFirstPose = false
-                calibrationStatus = String(format: "Glove direction saved for next time. Raise your hand and point forward. Pose difference: %.1f°. Repeat setup only if the sensor moves.", calibration.validationError)
-            } else {
-                firstPose = pose; hasFirstPose = true
-                calibrationStatus = "Downward pose saved. Now point the same straight finger directly upward and hold still."
+            captureTask = nil
+            syncCaptureState()
+            switch outcome {
+            case .downwardCaptured:
+                reportCapture("downwardCaptured", "Step 1 complete. Point your finger straight up and capture the second pose.")
+            case .readyToSave:
+                saveCapturedCalibration(for: deviceID)
+            case .unsteadyPose:
+                reportCapture("unsteadyPose", hasFirstPose
+                    ? "Upward capture didn’t finish steadily. Your downward pose is kept. Hold your finger up and retry."
+                    : "Downward capture didn’t finish steadily. Hold your finger down and retry.")
+            case .inconsistentPoses:
+                reportCapture("inconsistentPoses", "The poses didn’t match. Keep the sensor fixed and retry the upward pose.")
             }
         }
+    }
+
+    private func saveCapturedCalibration(for deviceID: UUID) {
+        guard let calibration = pointingSetup.save(to: mountingStore, for: deviceID) else {
+            syncCaptureState()
+            reportCapture("saveFailed", "Both poses captured, but saving failed. Tap Save pointing setup to retry.")
+            return
+        }
+        // Persistence finishes before publishing, since callbacks may disconnect the glove.
+        syncCaptureState()
+        glove.calibrate(calibration)
+        reportCapture("saved", "Glove pointing saved. Raise your hand and point forward.")
+    }
+
+    private func syncCaptureState() {
+        if hasFirstPose != pointingSetup.hasDownwardPose { hasFirstPose = pointingSetup.hasDownwardPose }
+        let pending = pointingSetup.pendingCalibration != nil
+        if hasPendingCalibration != pending { hasPendingCalibration = pending }
+    }
+
+    private func reportCapture(_ outcome: String, _ status: String) {
+        lastCaptureOutcome = outcome
+        calibrationStatus = status
+        UIAccessibility.post(notification: .announcement, argument: status)
     }
 
     func recalibrateHardware() {
         cancelCapture()
-        firstPose = nil; hasFirstPose = false
         do { try glove.recalibrateHardware() }
         catch { hardwareCalibrationStatus = "Could not restart the sensors. Check the glove connection and firmware." }
     }
 
     func resetCalibration() {
         cancelCapture()
-        firstPose = nil; hasFirstPose = false
-        if let id = peripheral?.identifier { mountingStore.remove(for: id) }
+        guard let id = peripheral?.identifier, mountingStore.remove(for: id) else {
+            reportCapture("resetFailed", "Could not reset the saved setup. Reconnect and try again.")
+            return
+        }
+        pointingSetup.reset()
+        syncCaptureState()
         glove.resetPointingCalibration()
-        calibrationStatus = "Point your finger straight down and hold still for the first pose."
+        reportCapture("reset", "Point your finger straight down and hold still for the first pose.")
     }
 
     private func cancelCapture() {
+        if capturingPose { lastCaptureOutcome = "interrupted" }
         captureTask?.cancel(); captureTask = nil
-        capturingPose = false; observations = []
+        capturingPose = false
+        pointingSetup.interrupt()
+        syncCaptureState()
     }
 
     func testMotor() {
@@ -368,7 +403,6 @@ import PointCore
     func setupDismissed() {
         setupOpen = false
         cancelCapture()
-        firstPose = nil; hasFirstPose = false
         // An explicitly chosen or remembered connection may finish after the sheet closes.
         if choosingDevice {
             choosingDevice = false
@@ -407,7 +441,6 @@ import PointCore
 
     private func resetLink() {
         cancelCapture()
-        firstPose = nil; hasFirstPose = false
         firmwareLoop?.cancel()
         firmwareLoop = nil
         glove.disconnect()

@@ -100,7 +100,7 @@ struct DeviceSetupView: View {
                         Text(connection.calibrationStatus).foregroundStyle(.secondary)
                         if connection.capturingPose { ProgressView("Measuring direction…") }
                         if !connection.pointingReady {
-                            Button(connection.hasFirstPose ? "Capture upward pose" : "Capture downward pose") { connection.capturePose() }
+                            Button(connection.hasPendingCalibration ? "Save pointing setup" : connection.hasFirstPose ? "Capture upward pose" : "Capture downward pose") { connection.capturePose() }
                                 .frame(minHeight: 44)
                                 .disabled(connection.capturingPose || !connection.sensorReady)
                         }
@@ -136,7 +136,10 @@ struct DeviceSetupView: View {
             }
             .navigationTitle("Device setup")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { dismiss() }.disabled(connection.capturingPose)
+            } }
+            .interactiveDismissDisabled(connection.capturingPose)
             .onChange(of: connection.phase) { _, _ in
                 UIAccessibility.post(notification: .announcement,
                                      argument: connection.message ?? connection.title)
