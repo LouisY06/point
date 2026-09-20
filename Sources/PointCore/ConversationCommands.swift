@@ -1,5 +1,28 @@
 import Foundation
 
+/// Interpret a reply only while a prepared route is awaiting permission to start.
+/// Match complete phrases so a destination name or a negated instruction cannot start it.
+public enum RouteStartReply: Equatable {
+    case start, wait, repeatQuestion
+
+    public static func parse(_ text: String) -> Self? {
+        let words = text.lowercased().replacingOccurrences(of: "’", with: "'")
+            .components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: " ")
+        switch words {
+        case "yes", "yeah", "yep", "yes please", "sure", "okay", "ok", "please start",
+             "yes start", "yes start the route", "start the route", "start the trip", "start trip": return .start
+        case "no", "nope", "no thanks", "no thank you", "not now", "not yet", "wait", "later", "maybe",
+             "don t start", "don t start yet", "don t start walking", "do not start", "no don t start": return .wait
+        default:
+            switch ConversationCommand.parse(text) {
+            case .start: return .start
+            case .repeatReply: return .repeatQuestion
+            default: return nil
+            }
+        }
+    }
+}
+
 public enum ConversationCommand: Equatable {
     case start, pause, resume, repeatReply, endConversation, cancelRoute, atStop, boarded, notBoarded, alighted, replan
 

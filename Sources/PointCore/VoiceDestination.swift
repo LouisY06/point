@@ -27,10 +27,12 @@ public struct PlaceCandidate: Identifiable {
 }
 
 public enum NavigationSpeech {
-    public static func routeReady(for place: PlaceCandidate, handsFree: Bool = false) -> String {
+    public static let startQuestion = "Would you like to start? Say yes or no."
+
+    public static func routeReady(for place: PlaceCandidate) -> String {
         let street = place.streetAddress?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let location = street.isEmpty ? "" : " on \(street)"
-        return "Your route to \(place.name)\(location) is ready. " + (handsFree ? "Say start when you’re ready." : "Tap Start when you're ready.")
+        return "Your route to \(place.name)\(location) is ready. \(startQuestion)"
     }
 }
 

@@ -67,6 +67,35 @@ final class AccessibilityAuditTests: XCTestCase {
         try audit("route walk")
     }
 
+    func testPreparedRouteAsksBeforeStartingAndCanWait() throws {
+        launch("--preview-route-start")
+        XCTAssertTrue(app.staticTexts["Would you like to start?"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Reply by voice"].exists)
+        XCTAssertFalse(app.buttons["End walk"].exists)
+        assertEveryControlIsLabeled()
+        try audit("route start question")
+        app.buttons["Not now"].tap()
+        XCTAssertTrue(app.staticTexts["Ready when you are. Say start to begin."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Try the walk"].exists)
+        XCTAssertFalse(app.buttons["End walk"].exists)
+        app.buttons["Try the walk"].tap()
+        XCTAssertTrue(app.buttons["End walk"].waitForExistence(timeout: 5))
+    }
+
+    func testYesTranscriptStartsPreparedRoute() throws {
+        launch("--preview-route-start", "--preview-route-answer", "yes")
+        XCTAssertTrue(app.buttons["End walk"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Try the walk"].exists)
+        XCTAssertFalse(app.staticTexts["Would you like to start?"].exists)
+    }
+
+    func testNoTranscriptKeepsPreparedRouteWithoutStarting() throws {
+        launch("--preview-route-start", "--preview-route-answer", "no")
+        XCTAssertTrue(app.staticTexts["Ready when you are. Say start to begin."].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Try the walk"].exists)
+        XCTAssertFalse(app.buttons["End walk"].exists)
+    }
+
     func testDeviceSetupIsNavigable() throws {
         launch("--device-setup")
         XCTAssertTrue(app.navigationBars["Device setup"].waitForExistence(timeout: 5))
