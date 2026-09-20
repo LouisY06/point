@@ -1,29 +1,31 @@
 #include "haptic_led.h"
-#include "driver/gpio.h"
+#include "led_strip.h"
 #include "esp_log.h"
 
-// XIAO ESP32-S3 user LED: GPIO21, active low (not the charge indicator).
+// ESP32-S3 DevKitC-1: addressable RGB LED, not a plain GPIO LED.
+// Original boards use GPIO48; revision 1.1 uses GPIO38.
 #ifndef POINT_HAPTIC_LED_GPIO
-#define POINT_HAPTIC_LED_GPIO 21
+#define POINT_HAPTIC_LED_GPIO 38
 #endif
-#ifndef POINT_HAPTIC_LED_ACTIVE_LOW
-#define POINT_HAPTIC_LED_ACTIVE_LOW 1
-#endif
-static bool ready;
+static led_strip_handle_t strip;
 
 esp_err_t point_haptic_led_init(void) {
-    gpio_config_t config = {.pin_bit_mask = 1ULL << POINT_HAPTIC_LED_GPIO,
-        .mode = GPIO_MODE_OUTPUT, .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE, .intr_type = GPIO_INTR_DISABLE};
-    // Preload OFF before enabling output to avoid a startup flash.
-    gpio_set_level(POINT_HAPTIC_LED_GPIO, POINT_HAPTIC_LED_ACTIVE_LOW ? 1 : 0);
-    esp_err_t err = gpio_config(&config);
-    ready = err == ESP_OK;
-    if (ready) point_haptic_led_set(false);
-    ESP_LOGI("point_led", "Built-in user LED GPIO%d active-low=%d ready=%d",
-             POINT_HAPTIC_LED_GPIO, POINT_HAPTIC_LED_ACTIVE_LOW, ready);
+    if (strip) { led_strip_clear(strip); led_strip_del(strip); strip = NULL; }
+    led_strip_config_t config = {.strip_gpio_num = POINT_HAPTIC_LED_GPIO, .max_leds = 1};
+    led_strip_rmt_config_t rmt = {.resolution_hz = 10000000, .flags.with_dma = false};
+    esp_err_t err = led_strip_new_rmt_device(&config, &rmt, &strip);
+    if (err == ESP_OK) err = led_strip_clear(strip);
+    if (err != ESP_OK && strip) { led_strip_del(strip); strip = NULL; }
+    ESP_LOGI("point_led", "DevKit RGB LED GPIO%d via RMT ready=%d", POINT_HAPTIC_LED_GPIO, err == ESP_OK);
     return err;
 }
 void point_haptic_led_set(bool on) {
-    if (ready) gpio_set_level(POINT_HAPTIC_LED_GPIO, POINT_HAPTIC_LED_ACTIVE_LOW ? !on : on);
+    if (!strip) return;
+    // Green while the motor is commanded on; dark in gaps, on STOP and on faults.
+    esp_err_t err = on ? led_strip_set_pixel(strip, 0, 0, 64, 0) : led_strip_clear(strip);
+    if (on && err == ESP_OK) err = led_strip_refresh(strip);
+    if (err != ESP_OK) {
+        led_strip_clear(strip);
+        ESP_LOGE("point_led", "RGB LED write failed: %s", esp_err_to_name(err));
+    }
 }

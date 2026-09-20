@@ -12,3 +12,7 @@ cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I "$root/src" \
 cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I "$root/test/stubs" -I "$root/src" \
     "$root/src/haptics.c" "$root/src/haptic_led.c" "$root/src/motor_pattern.c" "$root/test/haptic_led_test.c" -o "$temp/led"
 "$temp/led"
+# Also compile the original DevKitC-1 LED pin; the connected glove uses GPIO38.
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -DPOINT_HAPTIC_LED_GPIO=48 -I "$root/test/stubs" -I "$root/src" \
+    "$root/src/haptics.c" "$root/src/haptic_led.c" "$root/src/motor_pattern.c" "$root/test/haptic_led_test.c" -o "$temp/led-original"
+"$temp/led-original"

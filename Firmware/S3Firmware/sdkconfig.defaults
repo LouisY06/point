@@ -16,7 +16,7 @@ CONFIG_BT_NIMBLE_GATT_SERVER=y
 CONFIG_BT_NIMBLE_GATT_CLIENT=n
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 
-# XIAO ESP32-S3: 8 MB flash.
+# Verified ESP32-S3 DevKit: 8 MB quad flash; no PSRAM dependency.
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 
 # This will also be the tick rate needed by the eventual 100 Hz IMU task.

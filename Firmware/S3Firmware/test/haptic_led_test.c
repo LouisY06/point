@@ -2,15 +2,24 @@
 #include <stdio.h>
 #include "haptics.h"
 #include "driver/i2c_master.h"
-#include "driver/gpio.h"
-static int led_level = -1, motor_output;
+#include "led_strip.h"
+static int led_level = -1, motor_output, pending_led;
 static bool fault, fail_output;
-esp_err_t gpio_config(const gpio_config_t *c) {
-    assert(c->pin_bit_mask == (1ULL<<21) && c->mode == GPIO_MODE_OUTPUT);
-    assert(led_level == 1); // OFF preloaded before output is enabled.
-    return ESP_OK;
+#ifndef POINT_HAPTIC_LED_GPIO
+#define POINT_HAPTIC_LED_GPIO 38
+#endif
+esp_err_t led_strip_new_rmt_device(const led_strip_config_t *c, const led_strip_rmt_config_t *r, led_strip_handle_t *s) {
+    assert(c->strip_gpio_num == POINT_HAPTIC_LED_GPIO && c->max_leds == 1);
+    assert(r->resolution_hz == 10000000 && !r->flags.with_dma);
+    *s = (void*)1; return ESP_OK;
 }
-esp_err_t gpio_set_level(int pin, int level) { assert(pin == 21); led_level = level; return ESP_OK; }
+esp_err_t led_strip_set_pixel(led_strip_handle_t s, uint32_t index, uint32_t red, uint32_t green, uint32_t blue) {
+    assert(s && index == 0 && red == 0 && green == 64 && blue == 0);
+    pending_led = 0; return ESP_OK;
+}
+esp_err_t led_strip_refresh(led_strip_handle_t s) { assert(s); led_level = pending_led; return ESP_OK; }
+esp_err_t led_strip_clear(led_strip_handle_t s) { assert(s); pending_led = led_level = 1; return ESP_OK; }
+esp_err_t led_strip_del(led_strip_handle_t s) { assert(s); return ESP_OK; }
 esp_err_t i2c_new_master_bus(const i2c_master_bus_config_t *c, i2c_master_bus_handle_t *b) {
     assert(c->sda_io_num==41 && c->scl_io_num==42); *b=(void*)1; return ESP_OK;
 }
@@ -60,5 +69,5 @@ int main(void) {
     fail_output=true;
     assert(!point_haptics_play(&c,5000000));
     assert(!point_haptics_ready() && led_level==1 && motor_output==0);
-    puts("LED/driver tests passed: active-low pin, startup off, pulse gaps, deadline, stop and failures.");
+    puts("LED/driver tests passed: DevKit RGB pixel/refresh, startup off, pulse gaps, deadline, stop and failures.");
 }

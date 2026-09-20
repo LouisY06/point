@@ -8,7 +8,7 @@ not validated navigation hardware.
 ## Build
 
 PlatformIO Core is required. Platform `espressif32@6.12.0` pins ESP-IDF 5.5.0.
-The project uses the `seeed_xiao_esp32s3` definition, 8 MB quad flash, no PSRAM
+The project uses the `esp32-s3-devkitc-1` definition, 8 MB quad flash, no PSRAM
 dependency. All circuit pins are explicit and match the teammate's README.
 
 ```sh
@@ -19,8 +19,8 @@ dependency. All circuit pins are explicit and match the teammate's README.
 
 `build.sh` stages the source under `/tmp/point-s3-firmware`, because ESP-IDF
 rejects spaces in project paths. Override `POINT_FIRMWARE_BUILD_DIR` to use another
-space-free directory, and `POINT_PLATFORMIO` if `pio` is not on PATH. Build output
-is `.pio/build/seeed_xiao_esp32s3` inside that staging directory. Run scripts from
+space-free directory, and `POINT_PLATFORMIO` if `pio` is not on PATH. The default environment is `esp32-s3-devkitc-1-v1_1` (the user confirmed IO38). Build output
+is `.pio/build/esp32-s3-devkitc-1-v1_1` inside that staging directory. Run scripts from
 this directory or use their full paths. Machine-specific ports are not committed.
 
 Use 230400 baud for this bench adapter if faster uploads fail. The normal console
@@ -33,7 +33,7 @@ identified before upload; this project must not be uploaded to the old C6.
 - Controller 0: GPIO2 SDA / GPIO1 SCL, 100 kHz. BNO055 at 0x28/29 and MPU6050
   at 0x68/69. Driver reads have bounded timeouts.
 - Controller 1: GPIO41 SDA / GPIO42 SCL, 400 kHz. DRV2605L at 0x5A.
-- Built-in **user LED: GPIO21, active-low**, for the XIAO ESP32-S3 specified by this project ([Seeed pinout](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/)). The charge/power indicator is separate. The user LED follows successfully commanded nonzero DRV2605L RTP output, switches off in pulse gaps, and switches off on STOP, completion, disconnect, reset or driver error. It indicates commanded output, not measured actuator motion. `POINT_HAPTIC_LED_GPIO` and `POINT_HAPTIC_LED_ACTIVE_LOW` are compile-time overrides for a different documented board; do not assume these match an S3 DevKit RGB LED.
+- Built-in **addressable RGB LED** on the user's ESP32-S3 DevKit. The default environment uses GPIO38, confirmed on this glove. Use `-e esp32-s3-devkitc-1` only for an original GPIO48 board ([Espressif revision guide](https://documentation.espressif.com/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.1.html)). Confirm the board revision before uploading. The LED uses Espressif's pinned `led_strip` 3.0.1 component over RMT; setting a GPIO high/low does not drive this RGB LED. It lights green during commanded motor output and clears in pulse gaps, on STOP, disconnect and driver failure. It indicates commanded output, not measured actuator motion. Earlier builds incorrectly used the XIAO's GPIO21 plain LED because the original hardware README named that board.
 - BNO055 reset, normal power, degree units, internal clock, NDOF mode. Read
   fused orientation and calibration/self-test/system status at 50 Hz.
 - MPU6050 ±4 g, ±500°/s, 21 Hz filter, 100 Hz sampling. Startup averages 400
@@ -93,7 +93,7 @@ See [setup steps](../../docs/DEVICE_SETUP.md) and the [wire contract](../../docs
 
 Host tests exercise packet bounds, the exact Swift-compatible attitude vector,
 malformed opcodes/lengths, motor deadline, three-pulse timing, overlap rejection,
-STOP and invalid time. Both tests run with address/undefined-behavior sanitizers.
+STOP and invalid time. All tests run with address/undefined-behavior sanitizers.
 
 ## Remaining limitations
 
@@ -141,4 +141,10 @@ Install the matching app and this firmware together: HELLO now advertises bit 5 
 
 Hold the glove completely still during reset and until **Gyro 3/3**. Then move it gently through different orientations away from magnetic objects to allow compass calibration. Calibration is performed by the BNO055; an accepted restart is not a claim that calibration is complete. Live system/gyro/accelerometer/compass levels appear in the app. Accelerometer 3/3 is optional for this demo; full accelerometer calibration, if desired, requires additional stable orientations as described in the Bosch datasheet. The saved finger vector is unchanged. Re-establish the demo's direction reference after this deliberate sensor reset.
 
-`c` over the serial console performs the same sensor restart without deleting the app's saved mounting. A physical BLE check can use `python test/ble_smoke.py --recalibrate`, optionally with `--motor` to observe the motor and LED together. Host tests cover LED polarity, pulse gaps, expiry, stop, driver failure, reset packet bounds and app reset ordering. Physical LED operation and successful sensor settling still need observation on the connected board.
+`c` over the serial console performs the same sensor restart without deleting the app's saved mounting. A physical BLE check can use `python test/ble_smoke.py --recalibrate`, optionally with `--motor` to observe the motor and LED together. Host tests cover RGB pixel/refresh behavior on both documented pins, pulse gaps, expiry, stop, driver failure, reset packet bounds and app reset ordering. Physical LED operation and successful sensor settling still need observation on the connected board.
+
+## DevKit RGB LED correction — 20 September 2026
+
+The user identified the actual controller as an ESP32-S3 DevKit and confirmed IO38. The prior XIAO GPIO21 LED configuration was incorrect. The default now uses the DevKitC-1 v1.1 environment and an RMT-driven addressable RGB LED. GPIO48 remains an explicit alternative environment for original DevKitC-1 boards.
+
+The IO38 firmware was uploaded with verified write hashes; its boot-reported ELF hash matched the build. Logs confirmed `DevKit RGB LED GPIO38 via RMT ready=1`, both IMUs and the DRV2605L, zero sensor errors, and three finite 180 ms test cues completing. A phone reconnected during that check. These logs establish command execution; visible LED flashes require the user's observation.

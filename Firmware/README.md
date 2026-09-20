@@ -2,7 +2,7 @@
 
 ## Current status
 
-The active hardware target is a **Seeed Studio XIAO ESP32-S3**. The complete
+The active hardware target is an **ESP32-S3 DevKit** (confirmed by the user; the previous XIAO identification was incorrect). The complete
 Arduino bring-up sketch in
 [`CircuitTest/CircuitTest.ino`](CircuitTest/CircuitTest.ino) is functioning and
 has verified the BNO055, redundant MPU6050, and DRV2605L together.
@@ -39,7 +39,7 @@ The BNO055 is the primary fused IMU and the MPU6050 is the redundant IMU. Both
 share the first ESP32-S3 hardware I2C controller. The haptic driver uses the
 second controller.
 
-| Function | Peripheral pin | XIAO ESP32-S3 GPIO | I2C address | Firmware bus |
+| Function | Peripheral pin | ESP32-S3 GPIO | I2C address | Firmware bus |
 |---|---:|---:|---:|---:|
 | BNO055 data | SDA | GPIO2 | `0x28` or `0x29` | `TwoWire(0)` |
 | BNO055 clock | SCL | GPIO1 | — | `TwoWire(0)` |
@@ -103,20 +103,21 @@ pio device list
 ### Required ESP32-S3 project configuration
 
 Create the full firmware as a new PlatformIO project using board ID
-`seeed_xiao_esp32s3` and the ESP-IDF framework. A suitable starting
+`esp32-s3-devkitc-1` and the ESP-IDF framework. A suitable starting
 `platformio.ini` is:
 
 ```ini
-[env:seeed_xiao_esp32s3]
-platform = espressif32
-board = seeed_xiao_esp32s3
+[env:esp32-s3-devkitc-1-v1_1]
+platform = espressif32@6.12.0
+board = esp32-s3-devkitc-1
 framework = espidf
+build_flags = -DPOINT_HAPTIC_LED_GPIO=38
 monitor_speed = 115200
 ```
 
-PlatformIO documents `seeed_xiao_esp32s3` as the board identifier and supports
+PlatformIO documents `esp32-s3-devkitc-1` as the board identifier and supports
 both Arduino and ESP-IDF on this board:
-[PlatformIO XIAO ESP32-S3 board documentation](https://docs.platformio.org/en/latest/boards/espressif32/seeed_xiao_esp32s3.html).
+[PlatformIO ESP32-S3 DevKitC-1 board documentation](https://docs.platformio.org/en/latest/boards/espressif32/esp32-s3-devkitc-1.html).
 
 The Arduino Adafruit libraries are not production dependencies. Reimplement
 the verified behavior with ESP-IDF components:
@@ -148,7 +149,7 @@ S3Firmware/
 
 If the serial monitor is blank, verify the active port with `pio device list`
 and select the intended ESP-IDF console transport with
-`pio run -e seeed_xiao_esp32s3 --target menuconfig`. Persist required settings
+`pio run -e esp32-s3-devkitc-1-v1_1 --target menuconfig`. Persist required settings
 in `sdkconfig.defaults` instead of relying on one developer's generated local
 configuration.
 
@@ -158,16 +159,16 @@ Run these commands from the directory containing `platformio.ini`:
 
 ```sh
 # Compile the selected environment
-pio run -e seeed_xiao_esp32s3
+pio run -e esp32-s3-devkitc-1-v1_1
 
 # Compile and upload over USB
-pio run -e seeed_xiao_esp32s3 --target upload
+pio run -e esp32-s3-devkitc-1-v1_1 --target upload
 
 # Open the serial monitor
 pio device monitor --baud 115200
 
 # Remove generated build output
-pio run -e seeed_xiao_esp32s3 --target clean
+pio run -e esp32-s3-devkitc-1-v1_1 --target clean
 ```
 
 If more than one serial device is attached, use `pio device list`, then set
@@ -226,4 +227,4 @@ The app-side [proposed BLE contract](../docs/FIRMWARE_APP_PROTOCOL.md) now inclu
 
 ### Built-in LED and hardware calibration
 
-The integrated XIAO ESP32-S3 build uses its user LED on **GPIO21, active-low** to follow haptic output. It is off between pulses and on stop/disconnect; the power/charging light is separate. The app's **Restart sensor calibration** control (or serial `c`) restarts the BNO055 and backup gyro calibration without deleting the saved finger-axis map. See [S3 firmware](S3Firmware/README.md#hardware-sensor-recalibration-separate-from-finger-setup) for the matching firmware, LED wiring and live calibration workflow.
+The ESP32-S3 DevKit uses an **addressable RGB LED**, driven through RMT. The original DevKitC-1 uses GPIO48; revision 1.1 uses GPIO38. The user confirmed **IO38**, so `esp32-s3-devkitc-1-v1_1` is the default firmware environment. The LED lights green during haptic output and is off between pulses and on stop/disconnect. The previous GPIO21 active-low implementation targeted the wrong board and could not light this LED. The app's **Restart sensor calibration** control (or serial `c`) restarts the BNO055 and backup gyro calibration without deleting the saved finger-axis map. See [S3 firmware](S3Firmware/README.md#hardware-sensor-recalibration-separate-from-finger-setup) for the matching firmware, LED wiring and live calibration workflow.
