@@ -5,6 +5,8 @@ struct HandVoiceInteraction: View {
     let active: Bool
     let listening: Bool
     let searching: Bool
+    var speaking = false
+    var voiceStatus = "Listening"
     let transcript: String
     let isDemo: Bool
     let prompt: String?
@@ -64,7 +66,7 @@ struct HandVoiceInteraction: View {
                 .allowsHitTesting(!active)
                 .accessibilityHidden(active)
                 .accessibilityLabel("Speak to Point")
-                .accessibilityHint("Say a destination or enter demo mode. Recording ends when you pause.")
+                .accessibilityHint("Start a conversation. Say a destination or enter demo mode. You can interrupt Point while it speaks.")
 
                 if let displayedFrame, active {
                     Image(decorative: displayedFrame.image, scale: 1)
@@ -90,16 +92,18 @@ struct HandVoiceInteraction: View {
                     .accessibilityLabel("Type a destination instead")
                     if active {
                         if listening && !isDemo {
-                            Button("Finish", action: onFinish).frame(minHeight: 48)
+                            Button("Send now", action: onFinish).frame(minHeight: 48)
+                        } else if speaking {
+                            Button("Interrupt", action: onSpeak).frame(minHeight: 48)
                         } else if prompt != nil {
                             Button(action: onSpeak) {
                                 Label("Reply", systemImage: "mic.fill").frame(minHeight: 48)
                             }
                             .accessibilityHint("Speak an answer or a different destination")
                         } else if !isDemo && !searching {
-                            Button("Finish", action: onFinish).frame(minHeight: 48)
+                            Button("Speak", action: onSpeak).frame(minHeight: 48)
                         }
-                        Button("Cancel", role: .cancel, action: onCancel).frame(minHeight: 48)
+                        Button("End", role: .cancel, action: onCancel).frame(minHeight: 48)
                     } else {
                         Text("Tap to speak").font(.subheadline).foregroundStyle(.white.opacity(0.8))
                             .accessibilityHidden(true)
@@ -134,7 +138,7 @@ struct HandVoiceInteraction: View {
             if prompt != nil && !motion.finished { motion.finish(fallback: true) }
         }
         .onChange(of: motion.finished) { _, finished in
-            if finished && active { transcriptFocused = true }
+            if finished && active && !listening && !speaking { transcriptFocused = true }
         }
         .onDisappear { motion.reset() }
     }
@@ -149,8 +153,9 @@ struct HandVoiceInteraction: View {
                         .accessibilityHidden(true)
                     Text("Point").font(.footnote.weight(.semibold))
                         .foregroundStyle(.white.opacity(0.84))
-                    if searching || listening {
+                    if searching || listening || speaking {
                         Spacer()
+                        if speaking { Text("Speaking").font(.footnote).foregroundStyle(.white.opacity(0.8)) }
                         if listening {
                             Text("Listening").font(.footnote).foregroundStyle(.white.opacity(0.68))
                         }
@@ -161,7 +166,7 @@ struct HandVoiceInteraction: View {
                     VoiceActivity(searching: searching, quiet: simpleMotion || (!listening && !searching))
                         .frame(width: 22, height: 18)
                         .accessibilityHidden(true)
-                    Text(searching ? "Finding your route" : "Listening")
+                    Text(voiceStatus)
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(.white.opacity(0.68))
                 }
@@ -186,7 +191,7 @@ struct HandVoiceInteraction: View {
                 .onChange(of: spokenReply) { _, _ in if prompt != nil { scroll.scrollTo("utterance-end", anchor: .bottom) } }
                 .onChange(of: prompt) { _, _ in
                     scroll.scrollTo("reply-start", anchor: .top)
-                    if prompt != nil { transcriptFocused = true }
+                    if prompt != nil && !listening && !speaking { transcriptFocused = true }
                 }
             }
         }

@@ -1,67 +1,41 @@
-# Connect a Point device
+# Connect and calibrate the Point glove
 
-Point now supports the echo service in `Firmware/BTTest`, introduced in firmware commit `940a071`. This verifies the Bluetooth data path. It does not enable glove heading, gestures, battery telemetry, or vibration.
+Use the matching iPhone app and [Point S3 firmware](../Firmware/S3Firmware/README.md). The glove supplies BNO055 IMU/magnetometer orientation and DRV2605L vibration. The phone supplies location and an automatic local north correction for outdoor routes. Pointing setup uses only glove sensor samples. There is no phone-as-glove mode. The sample outdoor route remains explicitly simulated.
 
-The active hardware is now ESP32-S3. Its current Arduino circuit sketch is USB-only.
-Do not flash the C6 prototype to the S3. The app is ready for the [proposed S3 BLE
-contract](FIRMWARE_APP_PROTOCOL.md), but the board still needs that implementation.
-After echo verification the app checks capabilities: a compatible board enables
-**Test glove vibration**, while an echo-only board shows firmware support pending.
-For real glove navigation, connect here and turn off **Phone vibration guidance**
-before starting a walk. Relative gyro yaw will display a north-reference requirement.
+## Setup on iPhone
 
-## Legacy C6 echo test
+1. Fasten the sensor rigidly to the glove. Power on **Point S3**, keeping it still for the first few seconds. Disconnect other BLE clients.
+2. Open **Device setup**, scan, and select **Point S3**. Wait for the connection test and firmware negotiation.
+3. Hold the glove still for a few seconds to settle the gyro. If its compass needs settling, move your hand gently away from magnets and metal, then hold still again. Six-face accelerometer calibration is not required. Down/up setup needs healthy fresh orientation and gyro 3. Compass and system levels do not block these gravity poses. Navigation separately needs compass at least 2 and an acquired north reference (system above 0); accelerometer levels are informational.
+4. Keep your pointing finger straight and point it directly **down**. Tap **Capture downward pose** and hold the glove still for 2.5 seconds. The app uses the glove’s gravity reference to learn the finger axis; no phone orientation or compass reference is used.
+5. Point the same straight finger directly **up**. Tap **Capture upward pose** and hold still. Complete this within two minutes. The opposing pose checks that both measurements identify the same finger axis in the mounted sensor’s frame.
+6. A successful check shows the measured two-pose difference. This checks mounting repeatability, not absolute compass accuracy. The directional algorithm uses a provisional 5° compass allowance plus measured pose spread/disagreement; this is an operating assumption, not a measured hardware bound. If the check fails, follow its recovery message or use **Start setup over**.
+7. Use **Test glove vibration** for one finite 180 ms pulse. This explicit hardware test works without pointing setup; an acknowledgement confirms the command, not that the motor physically vibrated.
 
-1. Build and flash `Firmware/BTTest` to the XIAO ESP32-C6 using the [firmware instructions](../Firmware/BTTest/README.md). Keep the board powered on.
-2. Disconnect nRF Connect, LightBlue, or any other phone/client from the board. This firmware accepts one connection at a time.
-3. Open `Point.xcodeproj`, choose your physical iPhone and local development signing team, and run the Point scheme. No voice/maps credentials are needed for Bluetooth setup.
-4. Tap the device icon at the upper right of the home screen. The same control is available beside the route's Preview/Walking label.
-5. Tap **Scan for device**, then allow Bluetooth access. Select **BT Test C6** from the nearby list. If multiple boards have the same name, the short device identifier and signal label help distinguish them.
-6. Wait for **Connection verified**. Point subscribes to status notifications, writes a unique `P:<token>` command, and requires both write success and the matching `ACK:P:<token>` reply.
-7. Use **Test connection again** to send a fresh command, or **Disconnect** to release the board.
+Normal automatic haptics require the calibrated finger to be within **30° above or below level**. A hand hanging down or a finger pointing vertically produces no directional feedback; raise the hand and point forward to resume. The arrow uses the same accepted glove heading and hides when it becomes invalid or stale. Navigation also needs fresh GPS and a true-north correction; the phone's orientation is never the live pointing angle.
 
-The setup sheet displays the most recent reply and verification time. Closing the sheet preserves a verified connection. Closing it during a scan or setup cancels that work. Moving the app into the background closes this foreground-only prototype link; scan again on return.
+The completed finger-axis mapping is saved locally on the iPhone, keyed to the glove’s Bluetooth identifier. It restores automatically when that same glove reconnects and fresh, healthy orientation and gyro readiness return. Disconnect, backgrounding, board reset and temporary sensor faults clear live readings but do not erase this saved mounting geometry. Compass settling still pauses navigation; saving the mount does not save or bypass the sensor’s current calibration levels. Previous app versions did not persist mappings, so one successful down/up setup in this version is needed. Use **Sensor moved · Set up again** whenever the sensor slips or is remounted; slipping cannot be detected automatically. Closing the setup sheet preserves completed calibration, but discards an incomplete pose pair.
 
-## Protocol used by the app
+## Indoor beacons
 
-| Item | Value |
-| --- | --- |
-| Advertised name | `BT Test C6` |
-| Scan filter / service | `7f510001-1b15-4f0d-9e82-8a7c4d6e5f01` |
-| Command characteristic | `7f510002-1b15-4f0d-9e82-8a7c4d6e5f01` |
-| Status characteristic | `7f510003-1b15-4f0d-9e82-8a7c4d6e5f01` |
-| Command encoding / limit | UTF-8 probe; at most 16 bytes |
-| Probe size | 14 bytes; echoed status is 18 bytes |
-| Write mode | With response |
-| Confirmation | Matching notification plus successful GATT write |
-| Scan window | 12 seconds |
-| Connection/discovery deadline | 20 seconds |
-| Echo deadline | 5 seconds |
+Calibrate the glove once, then open the indoor demo. Point the glove level toward the first floor marker while tapping **Place 1**; that placement captures the room reference with no separate Align button. Add up to four beacons. Experimental pocket mode stops the camera and estimates movement from phone steps and gyro turns; face beacon 1 and stand still while pocketing the unlocked phone during its countdown. Build 12 adds touch protection and an iOS 26 Live Activity/background Bluetooth test; sustained locked-screen tracking still needs hardware verification. Camera-based position tracking remains available by turning pocket mode off. The glove always controls pointing and vibration. See [indoor instructions](INDOOR_DEMO.md).
 
-Readiness is not inferred from a device name, a successful radio connection, or the firmware's generic `ready`/`connected` status. Replies from an earlier probe cannot verify a later one. A connection-test failure closes the link so retry starts cleanly.
+## Recovery
 
-## Troubleshooting
+- **No device:** check board power and close other BLE clients. The board supports one client at a time.
+- **Firmware support pending:** install the matching S3 firmware. The legacy C6 echo service verifies communication only.
+- **Pose capture fails:** follow the gyro/compass settling message and hold the glove still with a straight finger in the requested direction.
+- **Upward pose disagrees:** point the same straight finger directly upward and check that the mounting did not shift. Start over after moving away from magnetic interference.
+- **Waiting for true-north correction:** allow location access and wait for fresh GPS/compass readings. Indoor room guidance instead uses magnetic heading and its explicit room alignment.
+- **Background or disconnect:** reopen Device setup and reconnect. The saved mounting direction restores once the sensor is ready; do not repeat the poses unless the sensor moved. Background GPS may continue a journey, but this prototype's BLE link is foreground-only.
+- **Simulator:** previews screens only; it cannot validate Bluetooth, glove orientation or vibration.
 
-- **No device found:** check power, confirm the BT Test firmware is flashed, move closer, and close other clients. Scan again; the firmware advertises again after disconnect.
-- **Bluetooth off:** enable Bluetooth in iPhone Settings, then scan again.
-- **Permission denied:** use **Open Settings** from the setup sheet and allow Point Bluetooth access.
-- **Connects but fails verification:** check firmware UUIDs/properties and serial logs. The status characteristic must support notifications and the command must accept acknowledged writes.
-- **Simulator:** setup can be opened and inspected, but use a physical iPhone for the BLE check. The simulator shows an explicit message instead of pretending to discover a board. Launch argument `--device-setup` opens the sheet for UI review.
-- **Disconnect or board reset:** the verified state clears. Scan and choose the device again; there is no silent automatic reconnection.
+## Integration and evidence
 
-## Implementation and next integration
+`DeviceConnection` owns BLE and setup capture; `FirmwareGlove` owns negotiated samples and bounded motor requests; `PointingCalibration` learns the sensor-to-finger vector and validates a second pose. Map telemetry observes the glove without replacing the navigation controller's event callback. Packet details are in [the shared protocol](FIRMWARE_APP_PROTOCOL.md).
 
-`App/DeviceConnection.swift` owns CoreBluetooth discovery, connection, subscription, timeouts, and cleanup. `App/DeviceSetupView.swift` presents setup and recovery. `Sources/PointCore/Device/BTTestProtocol.swift` defines the firmware contract and validates the probe; its tests cover byte limits, reply matching, callback ordering, and stale replies.
+On September 19, 2026 the matching S3 build was flashed with verified write hashes. A Mac BLE client passed echo, HELLO `0x1F`, fresh ATTITUDE and quaternion requests, and three finite motor requests, then disconnected. The sensor was healthy but uncalibrated (`0/3/0/0`). Mounted two-pose setup, real hand-down suppression, physical vibration and an outdoor/indoor end-to-end run still require observation with the worn glove. Automated tests establish software behavior only.
 
-This setup connection is deliberately separate from `GloveTransport`. The echo firmware has no real navigation capabilities, so an ACK must not make the app report working haptics or calibrated heading. The sample walk continues to use `SimulatedGlove` even if a board is connected.
+The signed matching app was installed on the connected iPhone and launched in Device setup. All 123 Swift regression tests, firmware host tests, iPhone build and simulator build pass; the disconnected setup layout was reviewed in the simulator.
 
-Next, agree on a versioned sensor/haptic protocol with the firmware team and implement that transport. Do not encode haptic commands into the echo endpoint and assume the board will execute them. Bonding and authentication are not part of this bring-up firmware.
-
-The implementation follows Apple's [central-role workflow](https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/PerformingCommonCentralRoleTasks/PerformingCommonCentralRoleTasks.html). The app declares the Bluetooth usage description required by [Core Bluetooth](https://developer.apple.com/documentation/corebluetooth).
-
-## Verification so far
-
-- The core suite includes five passing echo-protocol tests; see the project plan for the current full-suite and Apple Maps validation results.
-- Simulator and unsigned physical-iPhone builds succeed.
-- Setup opening, simulator recovery message, and dismissal were checked in the simulator.
-- A live iPhone-to-board connection has not yet been exercised. Run the bench steps above, then check board power loss, Bluetooth off, permission denial, missing reply, reconnect, and background/foreground behavior with actual hardware.
+Readiness follows [Bosch AN007 §3](https://www.bosch-sensortec.com/media/boschsensortec/downloads/application_notes_1/bst-bno055-an007.pdf): accelerometer calibration is optional and magnetometer level 2 is usable. The [Adafruit BNO055 guide](https://learn.adafruit.com/adafruit-bno055-absolute-orientation-sensor/device-calibration) explains why NDOF system level 0 is still blocked before north acquisition. Two-pose mounting checks and the forward-pointing gate remain required.

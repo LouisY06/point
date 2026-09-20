@@ -25,7 +25,7 @@ private struct PointHomeContent: View {
     @State private var voiceCenter = CGPoint.zero
     @FocusState private var typingFocused: Bool
 
-    private var recording: Bool { model.stage == .recording }
+    private var recording: Bool { model.isListening }
     private var searching: Bool { model.stage == .searching }
     private var transitionAnimation: Animation { .timingCurve(0.16, 1, 0.3, 1, duration: 0.72) }
 
@@ -67,6 +67,7 @@ private struct PointHomeContent: View {
             .coordinateSpace(name: "screen")
         }
         .tint(PointTheme.action)
+        .accessibilityAction(.magicTap) { model.microphone() }
         .onChange(of: model.stage) { _, stage in
             withAnimation(reduceMotion ? .easeOut(duration: 0.18) : transitionAnimation) {
                 reveal = stage == .route ? 1 : 0
@@ -77,12 +78,12 @@ private struct PointHomeContent: View {
             if phase != .active { model.sceneInactive() }
             if phase == .background { deviceConnection.enteredBackground() }
         }
-        .onChange(of: showDeviceSetup) { _, shown in if shown { model.pauseJourney() } }
+        .onChange(of: showDeviceSetup) { _, shown in if shown { model.pauseJourney(); model.openDeviceSetup() } }
         .sheet(isPresented: $showTyping) { typingSheet }
         .sheet(isPresented: $showDeviceSetup) { DeviceSetupView(connection: deviceConnection) }
         .fullScreenCover(isPresented: Binding(get: { model.stage == .indoorDemo },
                                              set: { if !$0 { model.leaveIndoorDemo() } })) {
-            CameraBeaconTestView(onInstruction: model.indoorDemoInstruction)
+            CameraBeaconTestView(connection: deviceConnection, onInstruction: model.indoorDemoInstruction)
         }
         .sheet(isPresented: Binding(get: { model.stage == .choosing }, set: { if !$0 && model.stage == .choosing { model.cancel() } })) { destinationSheet }
         .sheet(isPresented: Binding(get: { model.stage == .journeyChoice }, set: { if !$0 && model.stage == .journeyChoice { model.cancel() } })) { journeySheet }
@@ -101,6 +102,10 @@ private struct PointHomeContent: View {
         }
         .task {
             #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--verify-voice-audio") {
+                await model.verifyVoiceAudioLifecycle()
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--preview-transit") { return }
             if ProcessInfo.processInfo.arguments.contains("--preview-point-ai") || ProcessInfo.processInfo.arguments.contains("--demo-mode") { return }
             #endif
@@ -140,10 +145,12 @@ private struct PointHomeContent: View {
                     HandVoiceInteraction(
                         active: model.stage != .home,
                         listening: recording,
-                        searching: searching,
+                        searching: model.voicePhase == .thinking || searching,
+                        speaking: model.voicePhase == .speaking,
+                        voiceStatus: model.voiceStatus,
                         transcript: model.transcript,
                         isDemo: model.isDemo,
-                        prompt: model.stage == .clarifying || (recording && model.transcript.isEmpty) ? model.followUpPrompt : nil,
+                        prompt: model.voicePhase == .speaking ? (model.followUpPrompt ?? model.displayedReply) : model.stage == .clarifying ? model.followUpPrompt : nil,
                         spokenReply: model.displayedReply,
                         needsConfirmation: model.needsConfirmation,
                         confirmTitle: model.pendingTransitOffer ? "Take the T or bus" : "Yes, that's right",
@@ -152,7 +159,7 @@ private struct PointHomeContent: View {
                         onDecline: { model.declineDestination() },
                         onSpeak: { model.microphone() },
                         onFinish: { model.microphone() },
-                        onCancel: { model.cancel() },
+                        onCancel: { model.endConversation() },
                         onType: { model.prepareTypedReply(); typedDestination = ""; showTyping = true },
                         onVoiceCenter: { if model.stage != .route { voiceCenter = $0 } }
                     )
@@ -226,8 +233,9 @@ private struct PointHomeContent: View {
                     }
                     Spacer(minLength: 12)
                 }
+                conversationControl
                 if model.journeyStarted, model.journeyPlan != nil { journeyControls }
-                else if model.journeyStarted, !model.isDemo, model.usePhoneAsGlove { Text(model.phoneTester.status).font(.subheadline.weight(.medium)) }
+                else if model.journeyStarted, !model.isDemo { Text(model.gloveStatus).font(.subheadline.weight(.medium)) }
                 else if !model.journeyStarted { startRow }
             }
         } details: {
@@ -235,38 +243,27 @@ private struct PointHomeContent: View {
                     if model.journeyPlan != nil { journeyLegs }
                     Divider()
                     if model.journeyStarted {
-                        if !model.isDemo, model.usePhoneAsGlove, model.journeyPlan == nil || (model.isWalkingLeg && !model.awaitingSignal) {
-                            PhonePointingStatusView(tester: model.phoneTester, beaconIndex: model.activeBeaconIndex,
-                                                    beaconCount: model.route?.beacons.count ?? 0, arrived: model.journeyState == .arrived)
-                            Button("Test vibration") { model.phoneTester.testVibration() }
-                                .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
-                            if model.journeyState != .arrived, model.journeyPlan == nil {
-                                Button(model.journeyState == .paused ? "Resume pointing" : "Pause pointing") {
-                                    if model.journeyState == .paused { model.resumeJourney() }
-                                    else { model.pauseJourney() }
-                                }
-                                .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
-                            }
-                        } else if model.journeyPlan == nil {
                         Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : model.gloveStatus,
-                                  systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
-                                .font(.subheadline.weight(.medium))
+                              systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
+                            .font(.subheadline.weight(.medium))
+                        if !model.isDemo, model.journeyState != .arrived, model.journeyPlan == nil {
+                            Button(model.journeyState == .paused ? "Resume guidance" : "Pause guidance") {
+                                if model.journeyState == .paused { model.resumeJourney() }
+                                else { model.pauseJourney() }
+                            }.frame(minHeight: 44)
                         }
                         if model.isDemo {
                             Toggle("Simulate correct pointing", isOn: Binding(get: { model.pointingAligned }, set: { model.setDemoAlignment($0) }))
                                 .font(.subheadline)
                         }
                         Button(model.journeyPlan != nil ? "End trip" : "End walk") { model.cancel() }.font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
-                    } else if !model.isDemo {
-                        Toggle("Phone vibration guidance", isOn: $model.usePhoneAsGlove)
-                            .font(.subheadline.weight(.medium))
-                        if model.usePhoneAsGlove {
-                            Text("Point the camera end toward the highlighted beacon, screen down. Full strength within 10°; a gradual fade out to 35°. Two pulses mean beacon reached, then follow the next.")
-                                .font(.caption).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
                     }
-                Text(model.isDemo ? "Sample route · Simulated glove" : model.usePhoneAsGlove ? "Route tracks while locked · Unlock for phone vibration" : deviceConnection.isConnected ? deviceConnection.firmwareMessage : "Glove not connected")
+                    if !model.isDemo {
+                        Button("Set up glove orientation") { showDeviceSetup = true }.frame(minHeight: 44)
+                        Button("Test glove vibration") { deviceConnection.testMotor() }
+                            .frame(minHeight: 44).disabled(!deviceConnection.canTestMotor)
+                    }
+                Text(model.isDemo ? "Sample route · Simulated glove" : deviceConnection.isConnected ? deviceConnection.firmwareMessage : "Glove not connected")
                         .font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
             }
@@ -365,10 +362,25 @@ private struct PointHomeContent: View {
             .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
+    private var conversationControl: some View {
+        HStack {
+            Button { model.microphone() } label: {
+                Label(model.voiceStatus, systemImage: model.isListening ? "waveform" : "mic.fill")
+                    .font(.body).frame(minHeight: 44)
+            }
+            Spacer(minLength: 8)
+            if model.conversationActive {
+                Button("End") { model.endConversation() }.frame(minWidth: 44, minHeight: 44)
+                    .accessibilityLabel("End voice conversation")
+            }
+        }
+    }
+
     private var journeySheet: some View {
         NavigationStack {
             List {
                 if !model.transcript.isEmpty { Section { Text(model.transcript).foregroundStyle(.secondary) } }
+                Section { conversationControl }
                 ForEach(model.journeyCandidates) { plan in
                     Button { model.selectJourney(plan) } label: {
                         JourneyChoiceRow(plan: plan)
@@ -407,9 +419,7 @@ private struct PointHomeContent: View {
         NavigationStack {
             List {
                 Section { Text(model.transcript).foregroundStyle(.secondary) }
-                Section {
-                    Button { model.microphone() } label: { Label("Reply by voice", systemImage: "mic.fill") }
-                }
+                Section { conversationControl }
                 if model.candidates.isEmpty {
                     ContentUnavailableView.search(text: model.transcript)
                 } else {

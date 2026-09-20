@@ -1,14 +1,14 @@
 # Point — project plan and team handoff
 
-Updated: September 19, 2026 — Apple Maps migration. This document separates code that exists today from integration work and future design work.
+Updated: September 19, 2026 — calibrated glove integration. This document separates code that exists today from integration work and future design work.
 
-Phone test update: the phone can stand in for the glove with a fixed screen-down/top-edge-forward grip and eased vibration. Apple Maps guidance now has full strength across ±10°, then fades smoothly to zero at ±35°. Outdoor route testing uses GPS/true-north compass; **Test beacons** uses optional ARKit camera placement for 0.5–8 m local tests. Active-target highlighting, phone pause/resume, arrival/status UI and a 20 Hz stale-data loop are wired. Started walking sessions retain GPS progress on inactivity through background location; phone vibration stops until foregrounded. Local AR beacons clear on interruption. A cyan map arrow shows fresh physical top-edge heading, and Test vibration checks the motor independently. Real Apple Maps routes now show beacon progress and play two pulses per confirmed intermediate arrival, then guide toward the next target; three pulses mark the destination. A multi-beacon integration test verifies GPS progression and changed pointing targets. Playback now reuses one finite-pattern player across guidance and cues, with automatic recovery from startup/player failures and engine interruptions. Hardware work runs on a dedicated serial queue with only the latest pending command; the UI/sensor loop never waits for engine startup. GPS status distinguishes stale data from nearby-beacon uncertainty, and a recent good fix survives one poor update only until its existing five-second expiry. Repeated-use recovery is covered with an injected output adapter; physical-device verification remains pending. See [phone beacon test instructions and tuning](PHONE_BEACON_TEST.md).
+Glove update: the app and ESP32-S3 now share the raw quaternion/motor protocol. Two-pose setup learns the finger vector; live map, outdoor direction feedback and indoor test-beacon vibrations use the glove. Automatic cues require the finger within ±30° of level. Phone-as-glove controls are removed; camera floor placement, route progress and MBTA transit remain. See [setup steps](DEVICE_SETUP.md) and the current integration record at the end of this document.
 
 Voice update: the live Apple Speech/OpenAI input flow now has optional ElevenLabs spoken replies, using Caleb and Flash v2.5 with native speech fallback. `.env.example` documents Debug-only configuration. Speech stops on recording, cancel, inactivity and interruption; VoiceOver owns announcements when enabled. See [voice setup](VOICE_SETUP.md). City clarification, route confirmation and follow-up corrections are implemented; unrestricted conversation remains out of scope.
 
 Maps update: map display, destination search, and walking directions now use native Apple MapKit. The Google SDK and key requirements have been removed. Typed destination search needs no API credentials. The microphone now records and transcribes through OpenAI in Debug builds; the scripted demo runs only with the `--preview-route` launch argument.
 
-Bluetooth update: the merged ESP32-C6 echo firmware now has a matching iOS device setup flow. Users can scan, connect, and verify a unique command/status round trip. This remains separate from navigation capabilities, which the firmware does not yet implement. See [device setup](DEVICE_SETUP.md) for the bench test; live board verification is pending.
+Bluetooth update: Point S3 implements echo verification, capability negotiation, BNO055 quaternion/health replies and finite DRV2605L pulses. The matching firmware has passed Mac BLE checks; iPhone-to-glove physical trials remain pending. Legacy C6 firmware still verifies echo only.
 
 ## 1. Product and agreed scope
 
@@ -22,7 +22,7 @@ Decisions already made:
 - Phone GPS supplies position; the glove supplies its own pointing orientation over Bluetooth Low Energy.
 - We are using the existing algorithm for route geometry, checkpoints, and geographic beacons. The surrounding app, map presentation, voice flow, session control, and glove feedback are being built around it.
 - Vibration means the glove is pointing toward the active beacon. It does not encode left/right turns, walking direction, or obstacle clearance.
-- No camera is required for walking navigation or glove hardware. An optional phone-only ARKit test screen uses the camera to place nearby temporary beacons.
+- No camera is required for walking navigation or glove hardware. An optional ARKit test screen uses the camera to place nearby temporary beacons and the calibrated glove for guidance.
 - Keep the home screen minimal: wordmark, short prompt, hand, microphone, typing alternative, and preview.
 - Hardware selection and assembly belong to the hardware team. The app communicates through a replaceable transport interface.
 
@@ -60,7 +60,7 @@ Separately, `swift run point-demo` drives the real feedback engine with simulate
 | Map | Apple Maps for live routes and previews; route line, active beacon highlight, user location and framing | Wire automatic rerouting and validate outdoor advancement |
 | Navigation session | Start/pause/resume/stop, location quality checks, beacon advancement, arrival, off-route detection | Complete UI wiring and outdoor tuning |
 | Pointing feedback | True-north bearing comparison, uncertainty margin, dwell, hysteresis, stale-data rejection | Real sensor calibration and physical motor tuning |
-| Phone stand-in | Screen-down grip, top-edge pointing, lerped Core Haptics, pause/resume/status, 20 Hz freshness checks | Physical iPhone grip, vibration and outdoor compass verification |
+| Glove setup | Down/up gravity poses, two-pose mounting check and forward-only vibration gate | Worn-glove pose accuracy and physical vibration verification |
 | Nearby beacons | Camera placement, local AR direction, ordered 35 cm arrival, clear/pause and tracking-loss suppression | Physical iPhone tracking/arrival tests; measure drift and tune thresholds |
 | Glove interface | Capability-gated FirmwareGlove transport, proposed v1 packet codec, real-route injection, finite motor test and foreground watchdog; legacy echo fallback and simulator | Firmware adoption on ESP32-S3, north-reference calibration, physical board validation, background BLE |
 | Tests | Offline route, MapKit adapter, feedback, voice and echo-protocol tests; opt-in live MapKit test | Live BLE checks, service mocks, UI lifecycle and outdoor tests |
@@ -92,7 +92,7 @@ When the user accepts the transit offer (or asks for the T/bus outright) the des
 
 ### Cancel and lifecycle
 
-Cancel recording/search/demo work without allowing stale asynchronous results to reopen a route. Stopping a journey clears navigation state and feedback. The shell cancels recording or the staged demo when inactive and stops phone vibration. Started walks continue GPS progress using background location; foregrounding restores phone pointing. Local AR tests clear their beacons on inactivity. Manual pause, end and arrival disable background location. Physical locked-screen behavior and background glove integration still need testing/work.
+Cancel recording/search/demo work without allowing stale asynchronous results to reopen a route. Stopping a journey clears navigation state and feedback. The shell cancels recording or the staged demo when inactive and stops glove output. Started walks continue GPS progress using background location; backgrounding closes BLE, so reconnect and repeat pointing setup on return. Local AR tests clear their beacons on inactivity. Manual pause, end and arrival disable background location. Physical locked-screen behavior and background glove integration still need testing/work.
 
 ## 5. Architecture and file ownership boundaries
 
@@ -176,11 +176,11 @@ The algorithm computes the signed difference between the target bearing and glov
 | Minimum interval between pulses | 900 ms |
 | Foreground watchdog expectation | Approximately 10 Hz, plus incoming sensor/location events |
 
-These are prototype glove defaults, not calibrated hardware specifications. The real-glove foreground watchdog now evaluates at 10 Hz; physical stale-sensor behavior still needs board testing. Phone tests already use a separate 20 Hz foreground loop, grip gate and eased intensity (see the phone test document). Firmware must end every finite pulse locally even if the phone disconnects or suspends.
+These are prototype glove defaults, not calibrated hardware specifications. The real-glove foreground watchdog now evaluates at 10 Hz; physical stale-sensor behavior still needs board testing. Indoor glove guidance uses a 20 Hz room loop and eased finite motor pulses; phone stand-in controls are removed. The mounted finger must stay within ±30° of level for automatic haptics. Firmware must end every finite pulse locally even if the phone disconnects or suspends.
 
 ## 7. Hardware integration plan
 
-The merged connection firmware now targets the XIAO ESP32-C6. The earlier hardware shortlist from team brainstorming included a compact XIAO ESP32-S3, BNO055/BNO085-class orientation sensor, coin/ERM motor with a DRV2605L driver, and finger flex or capacitive gesture sensors. Charging/protection modules, battery placement, antenna needs, and fallback indicators remain hardware-team decisions. Availability, exact board dimensions, power requirements, and sensor performance are not confirmed by this repository.
+The current circuit uses XIAO ESP32-S3, primary BNO055 fused orientation with magnetometer, redundant MPU6050, and DRV2605L. Firmware update `e83f936` is merged. The IMUs share GPIO2/1 at 100 kHz; haptics uses GPIO41/42 at 400 kHz. BNO055 is sampled at 50 Hz, MPU6050 at 100 Hz. The teammate reports the combined Arduino circuit verified; ESP-IDF/S3 BLE integration and app mounting setup are implemented; physical calibration trials, magnetic-interference trials and automatic sensor failover remain unfinished. The C6 echo project is a legacy reference. Charging/protection, motor electrical ratings, battery and gesture hardware remain hardware-team decisions.
 
 The preferred form is electronics on the back of the hand and battery near the wrist, avoiding the palm and fingertips where practical. A belt attachment and learned gestures are future exploration.
 
@@ -194,7 +194,7 @@ Before app/firmware integration, agree on:
 6. Gesture events and debounce; raw gesture learning is outside the first integration.
 7. Battery reporting and recoverable error states.
 
-The app now connects CoreBluetooth through `FirmwareGlove`, a tested `GloveTransport`, and selects it for real glove mode. The simulator remains available for demos and the phone stand-in remains independent. The [proposed S3 packet contract](FIRMWARE_APP_PROTOCOL.md) defines capability negotiation, bounded commands, sample-age checks and acknowledgements; firmware adoption and physical validation remain pending. The MPU6050 currently reports relative yaw, so a validated north-reference method is still needed. See [the hardware contract](HARDWARE_INTERFACE.md).
+The app now connects CoreBluetooth through `FirmwareGlove`, a tested `GloveTransport`, and selects it for real glove mode. The simulator remains available for explicitly labeled sample routes. Live routes and indoor test beacons use the glove; phone stand-in controls are removed. The [proposed S3 packet contract](FIRMWARE_APP_PROTOCOL.md) defines capability negotiation, bounded commands, sample-age checks and acknowledgements; the S3 firmware implements it and physical validation remains pending. The primary BNO055 now supplies fused magnetic heading; the app supports calibration/health-gated readings and paired-phone-heading declination correction. Mounted pointing-axis and physical accuracy validation remain needed. MPU6050 fallback stays relative-only. See [the hardware contract](HARDWARE_INTERFACE.md).
 
 ## 8. Visual direction and hand integration
 
@@ -246,7 +246,7 @@ Use separate branches and pull requests. Coordinate before editing `PointViewMod
 - Display pause, arrival, reroute-needed, and real device status.
 - Connect off-route detection to guarded route requests with appropriate retry behavior.
 - Test short supervised walks, nearby turns, GPS uncertainty, stopping mid-request, and reconnects.
-- Validate the new background GPS route tracking on a locked phone. Phone haptics remain foreground-only; real glove feedback needs separate background BLE integration.
+- Validate the new background GPS route tracking on a locked phone. Glove feedback remains foreground-only; background BLE integration is still pending.
 
 ### M4 — Presentation and release readiness
 
@@ -272,7 +272,7 @@ Migration verification on September 19, 2026:
 - **Passed:** live MapKit search for MIT Museum and a walking route from public Cambridge coordinates; the service returned 69 checkpoints and 7 beacons in that test.
 - **Passed:** simulator keyboard entry → Apple Maps destination/address selection → real walking route display, using a simulated Cambridge location and no provider keys.
 - **Observed limitation:** granting location permission on the first search returns a retry message; search works after a fresh fix and retry. A single simulator location fix can become stale, so refresh the simulated location when testing later actions.
-- **Existing build warning:** iPad orientation/full-screen configuration needs review; it does not prevent the iPhone build.
+- **Resolved:** all iPad interface orientations are now declared; the current build no longer has that warning.
 - **Not verified:** the complete live voice flow, iPhone-to-board BLE, physical motor feedback, outdoor navigation, accessibility coverage, or locked-screen behavior.
 
 Run the network test explicitly with `POINT_TEST_LIVE_MAPS=1 swift test --filter AppleMapsTests.liveAppleSearchAndWalkingRoute`. The ordinary `swift test` run skips this one network test.
@@ -282,11 +282,11 @@ Run the network test explicitly with `POINT_TEST_LIVE_MAPS=1 swift test --filter
 | Priority / owner | Required work | Done when |
 | --- | --- | --- |
 | P0 — iOS / live input | Exercise typed search and route selection on an iPhone, then configure and test real OpenAI transcription | A real typed destination and a real utterance each produce a deliberately selected Apple walking route; cancellation and denied permissions recover cleanly |
-| P0 — hardware / BLE | Port the echo service and proposed v1 contract to the active ESP32-S3 and run the bench test | The phone receives the exact probe reply; power loss, reconnect, missing replies and Bluetooth denial are verified |
-| P0 — firmware + iOS | Adopt/revise the proposed v1 contract, implement firmware commands and validate the app transport with the S3 | Calibrated true-north heading drives finite physical motor pulses; misalignment, stale data and disconnect stop them |
-| P1 — phone testing | Validate implemented phone grip, vibration, AR placement and phone session UI on-device | Correct pointing strengthens feedback; reverse/upside-down grip does not; local arrival, tracking loss and interruption behavior are observed |
+| P0 — hardware / BLE | Complete iPhone-to-S3 end-to-end trials of the implemented echo/quaternion/motor contract | The phone receives the exact probe reply; power loss, reconnect, missing replies and Bluetooth denial are verified |
+| P0 — firmware + iOS | Validate the implemented two-pose mounting setup and forward-only automatic haptics on the worn glove | Calibrated true-north heading drives finite physical motor pulses; misalignment, stale data and disconnect stop them |
+| P1 — indoor testing | Validate AR placement, room alignment and glove feedback on-device | Forward pointing strengthens feedback; a lowered hand is silent; local arrival, tracking loss and interruption behavior are observed |
 | P1 — transit | Ride a Red Line + Green Line trip and a Route 1 bus trip with the app; background it mid-ride | Board-stop beacon, arrival buzz for the right direction only, automatic boarding/alighting with overrides, transfer, signal-loss hold and replan all behave; MBTA calls per plan ≤ 6 |
-| P1 — navigation | Extend phone-mode active-beacon, pause/resume, arrival and uncertainty UI to real glove integration | UI reflects core changes and cannot continue displaying a replaced route or stale connection |
+| P1 — navigation | Validate glove-backed active-beacon, pause/resume, arrival and uncertainty UI | UI reflects core changes and cannot continue displaying a replaced route or stale connection |
 | P1 — navigation | Validate the implemented foreground 10 Hz watchdog and connect off-route detection to guarded Apple rerouting | Stale sensors stop feedback without new packets; reroutes reset progress; late requests cannot reopen a stopped journey |
 | P1 — algorithm | Remove optional fixed-distance sampling if no longer useful; handle gradual bends and closely spaced turns | Geometry tests and supervised walks show that sparse targets follow the actual path without cutting corners |
 | P1 — app / hardware | Outdoor accuracy and calibration trials | Recorded results cover turns, arrival, poor GPS, magnetic interference and mounting orientation; thresholds are tuned from evidence |
@@ -296,6 +296,24 @@ Run the network test explicitly with `POINT_TEST_LIVE_MAPS=1 swift test --filter
 
 Not implemented: obstacle detection, learned gestures and independent-mobility validation. Destination conversation now supports clarification, corrections and route confirmation. Camera input exists only for temporary local test beacons; live Apple Speech text and synthesized spoken replies have separate voice implementations. These do not establish validated glove navigation.
 
-Phone haptic investigation: the user reports Test vibration also becomes silent after one use. Do not classify this as a GPS problem or mark physical vibration verified. An advanced-player completion handler now captures delayed playback failures, clears the command meter and rebuilds with a retry limit; expired bursts restart without a simultaneous stop command. A bounded on-device diagnostic log is ready for a connected-phone reproduction. Build and automated tests pass; installation/reproduction of this diagnostic build awaits the phone reconnecting.
+## Current glove integration — September 19, 2026
 
-S3 app integration update: hardware docs reviewed at firmware commit `66afcbf`. App-side capability negotiation, bounded motor commands, age-aware heading requests, physical-transport selection and Device setup motor testing are implemented against the proposed v1 contract. No firmware was flashed or changed; the circuit sketch remains USB-only. Off-route muting is unchanged. Physical vibration and true-north glove guidance remain unverified. See [firmware handoff and remaining work](FIRMWARE_APP_PROTOCOL.md).
+- Restored the previous task's uncommitted work into the continuation checkout without losing transit or indoor floor placement.
+- Implemented both sides of opcode-5 signed WXYZ quaternion protocol and strict HELLO `0x1F` dependencies. Firmware reads coherent orientation; Swift normalizes, validates health, and includes BLE round-trip latency in sample age.
+- Added two-pose mounting setup with live calibration levels, stable sample windows, opposing down/up gravity poses, measured repeatability, session reset and manual remount reset. No arbitrary mount-valid flag or claimed 2° hardware accuracy.
+- Removed the phone tester/player/status controls. The live map arrow and outdoor navigation use accepted glove heading; phone readings supply GPS and local declination only; pointing setup uses glove-only down/up gravity poses.
+- Added the user's forward-pointing requirement: automatic cues require the calibrated finger within ±30° of horizontal. Vertical/up/down poses and stale data stop automatic output. Explicit motor-test buttons intentionally work independently.
+- Preserved MBTA trip planning/boarding/alighting and camera floor placement. Indoor guidance now uses glove magnetic pointing, explicit room alignment toward beacon 1, and finite eased glove pulses. Camera position continues to determine beacon arrival even with a lowered hand.
+- S3 firmware built, flashed with verified write hashes, and passed Mac BLE echo/HELLO/ATTITUDE/ORIENTATION checks. Ten orientation samples had norm² about 1.0000 and ages 6–26 ms. Three finite motor requests were acknowledged; STOP and clean disconnect completed. Sensor calibration was 0/3/0/0, so this is not a successful physical pointing calibration.
+- Firmware host protocol/motor tests pass with ASAN/UBSAN. Swift checks cover calibration, wraparound, wrist roll, invalid/opposing poses, hand-down/vertical muting, stale samples, protocol corruption and room transforms alongside transit/AR regression tests. A timing-sensitive transit polling test now waits for its observed state with a bounded deadline instead of assuming a 60 ms scheduling window.
+- Pending physical evidence: worn-glove two-pose setup and rotated-wrist accuracy, actual motor sensation, lowered-hand cutoff timing, iPhone-to-glove navigation, indoor tracking recovery, and supervised outdoor/transit trials. Motor requests and builds do not establish these.
+
+See [setup](DEVICE_SETUP.md), [wire contract](FIRMWARE_APP_PROTOCOL.md), and [firmware bench record](../Firmware/S3Firmware/README.md). Background BLE, persistent calibration, hardware motor cutoff, battery telemetry and automatic IMU failover remain out of scope for this bring-up.
+
+Final verification: 121 Swift tests in 26 suites pass; S3 ASAN/UBSAN host tests, signed iPhone build and iOS simulator build pass. Device setup was visually checked in the simulator. The matching app was installed on the connected iPhone and launched with Device setup. This does not establish iPhone-to-glove physical calibration or vibration.
+
+Setup simplification: removed mandatory six-face accelerometer calibration and all-levels=3 readiness. The app now accepts system >0, gyro=3 and magnetometer ≥2, matching Bosch guidance on optional accelerometer calibration and usable compass level 2. Two-pose mounting validation, age/health checks and the ±30° haptic gate are unchanged. Firmware packets and motor behavior are unchanged.
+
+Glove-only setup update: removed the phone compass/motion reference and its setup text and motion permission. Capture finger-down then finger-up from glove quaternions; reject unstable, stale, same-pose or inconsistent captures. This verifies mounting repeatability, not absolute magnetic accuracy. The prototype uses a documented provisional 5° compass allowance plus measured pose spread and disagreement. No phone vibration player or controls remain in the app.
+
+Screenshot regression fixed: System 0 / Gyro 3 / Accel 3 / Compass 1 now permits down/up mounting capture. Gravity-pose setup and magnetic navigation use separate readiness checks. Compass settling no longer disables capture or erases the learned finger axis, while automatic compass guidance remains paused until north is acquired. A magnetic-reference loss invalidates indoor room alignment independently. Removed six-side wording and the stale “hold both” instruction. Regression tests reproduce the screenshot levels and cover compass acquisition/loss plus stale/gyro-fault rejection.

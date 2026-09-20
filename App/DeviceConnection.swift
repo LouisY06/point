@@ -21,7 +21,24 @@ import PointCore
     @Published private(set) var permissionDenied = false
     @Published private(set) var firmwareMessage = "Glove firmware support pending"
     @Published private(set) var canTestMotor = false
+    @Published private(set) var canGuideIndoors = false
+    @Published private(set) var indoorGuidanceMessage = "Connect your glove for pointing and vibration."
+    @Published private(set) var sensorSummary: String?
+    @Published private(set) var calibrationStatus = "Connect your glove to begin."
+    @Published private(set) var calibrationLevels = "Waiting for sensor readings"
+    @Published private(set) var capturingPose = false
+    @Published private(set) var hasFirstPose = false
+    @Published private(set) var pointingReady = false
+    @Published private(set) var orientationSupported = false
+    @Published private(set) var sensorReady = false
     let glove = FirmwareGlove()
+    var keepsDemoRunningInBackground = false
+    var onDemoReading: (() -> Void)?
+    private let mountingStore = PointingCalibrationStore()
+    private var firstPose: PointingCalibration.Pose?
+    private var observations: [GloveOrientationSample] = []
+    private var captureTask: Task<Void, Never>?
+    private var setupOpen = false
     private var firmwareLoop: Task<Void, Never>?
 
     private var central: CBCentralManager?
@@ -43,16 +60,118 @@ import PointCore
         }
         glove.onChange = { [weak self] in
             guard let self else { return }
+            self.updateCalibration()
             let value = self.glove.message ?? "Glove firmware support pending"
             if self.firmwareMessage != value { self.firmwareMessage = value }
             let ready = self.glove.connection == .ready && self.glove.capabilities?.vibration == true
             if self.canTestMotor != ready { self.canTestMotor = ready }
+            let indoorReady = ready && self.glove.magneticPointing() != nil
+            if self.canGuideIndoors != indoorReady { self.canGuideIndoors = indoorReady }
+            let indoorMessage: String
+            if self.glove.connection != .ready { indoorMessage = "Connect your glove for pointing and vibration." }
+            else if !ready { indoorMessage = "Glove motor unavailable. Check Device setup." }
+            else if self.glove.pointingCalibration == nil { indoorMessage = "Set up the glove’s pointing direction before starting guidance." }
+            else if let reason = self.glove.sensorHealth?.fusionBlockingReason { indoorMessage = reason }
+            else if !indoorReady { indoorMessage = "Raise your hand and point forward to align the glove with the room." }
+            else { indoorMessage = "Glove ready for room guidance." }
+            if self.indoorGuidanceMessage != indoorMessage { self.indoorGuidanceMessage = indoorMessage }
+            let sensor = self.glove.sensorHealth.map {
+                $0.source == .bno055 ? "BNO055 · Primary compass" : "MPU6050 · Backup motion sensor"
+            }
+            if self.sensorSummary != sensor { self.sensorSummary = sensor }
         }
+    }
+
+
+    func beginSetup() {
+        setupOpen = true
+        updateCalibration()
+    }
+
+    private func updateCalibration() {
+        let wasReady = sensorReady
+        let setupBlock = glove.pointingSetupBlockingReason()
+        let usable = setupBlock == nil
+        if usable, glove.pointingCalibration == nil, !capturingPose, firstPose == nil,
+           let id = peripheral?.identifier, let saved = mountingStore.load(for: id) {
+            // calibrate publishes a change; the nested update sees a non-nil mapping.
+            glove.calibrate(saved)
+            calibrationStatus = "Saved glove direction restored. Repeat setup only if the sensor moves on the glove."
+        }
+        if sensorReady != usable { sensorReady = usable }
+        if orientationSupported != glove.supportsOrientation { orientationSupported = glove.supportsOrientation }
+        let ready = glove.pointingCalibration != nil
+        if pointingReady != ready { pointingReady = ready }
+        if let health = glove.sensorHealth {
+            let levels = "System \(health.system)/3 · Gyro \(health.gyro)/3 · Accel \(health.accelerometer)/3 (optional) · Compass \(health.magnetometer)/3"
+            if calibrationLevels != levels { calibrationLevels = levels }
+        }
+        if !usable {
+            firstPose = nil
+            if hasFirstPose { hasFirstPose = false }
+            if capturingPose { cancelCapture() }
+            let status = setupBlock ?? "Connect your glove to begin."
+            if calibrationStatus != status { calibrationStatus = status }
+            return
+        }
+        if !wasReady, !pointingReady, firstPose == nil {
+            calibrationStatus = "Glove ready. Point your finger straight down and capture the first pose."
+        }
+        guard capturingPose, let sample = glove.orientation,
+              observations.last?.timestamp != sample.timestamp else { return }
+        observations.append(sample)
+        if observations.count > 30 { observations.removeFirst() }
+    }
+
+    func capturePose() {
+        guard setupOpen, !capturingPose, glove.pointingSetupBlockingReason() == nil else { return }
+        if firstPose == nil {
+            if let id = peripheral?.identifier { mountingStore.remove(for: id) }
+            glove.resetPointingCalibration()
+        }
+        observations = []
+        capturingPose = true
+        calibrationStatus = "Hold your glove still for two seconds…"
+        captureTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(2.5)) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            capturingPose = false
+            guard let pose = PointingCalibration.capture(observations, direction: firstPose == nil ? .down : .up, now: Date()) else {
+                calibrationStatus = "Couldn’t get a steady glove reading. Keep your finger straight in the requested pose and hold the glove still, then retry."
+                return
+            }
+            if let firstPose {
+                guard let calibration = PointingCalibration(first: firstPose, second: pose) else {
+                    calibrationStatus = "The poses didn’t agree. Point the same straight finger directly upward and hold still. Keep the sensor fixed on your glove. Retry, or start over."
+                    return
+                }
+                glove.calibrate(calibration)
+                if let id = peripheral?.identifier { mountingStore.save(calibration, for: id) }
+                self.firstPose = nil; hasFirstPose = false
+                calibrationStatus = String(format: "Glove direction saved for next time. Raise your hand and point forward. Pose difference: %.1f°. Repeat setup only if the sensor moves.", calibration.validationError)
+            } else {
+                firstPose = pose; hasFirstPose = true
+                calibrationStatus = "Downward pose saved. Now point the same straight finger directly upward and hold still."
+            }
+        }
+    }
+
+    func resetCalibration() {
+        cancelCapture()
+        firstPose = nil; hasFirstPose = false
+        if let id = peripheral?.identifier { mountingStore.remove(for: id) }
+        glove.resetPointingCalibration()
+        calibrationStatus = "Point your finger straight down and hold still for the first pose."
+    }
+
+    private func cancelCapture() {
+        captureTask?.cancel(); captureTask = nil
+        capturingPose = false; observations = []
     }
 
     func testMotor() {
         do {
-            try glove.send(.confirm(durationMs: 180, intensity: 160))
+            try glove.testMotor()
             message = "Motor test requested. A device reply confirms receipt, not physical vibration."
         } catch GloveTransportError.busy {
             message = "The glove is finishing a stop request. Try the motor test again in a moment."
@@ -164,11 +283,20 @@ import PointCore
     }
 
     func setupDismissed() {
+        setupOpen = false
+        cancelCapture()
+        firstPose = nil; hasFirstPose = false
         // Keep an established link, but never scan or connect invisibly behind the sheet.
         if isWorking { disconnect() }
     }
 
     func enteredBackground() {
+        if keepsDemoRunningInBackground, isConnected {
+            cancelCapture()
+            central?.stopScan()
+            wantsScan = false
+            return
+        }
         // Foreground-only prototype: do not leave a suspended connection owning the
         // firmware's single BLE slot or claim a link remains verified after suspension.
         let wasActive = isWorking || hasLink
@@ -189,6 +317,8 @@ import PointCore
     }
 
     private func resetLink() {
+        cancelCapture()
+        firstPose = nil; hasFirstPose = false
         firmwareLoop?.cancel()
         firmwareLoop = nil
         glove.disconnect()
@@ -350,7 +480,14 @@ extension DeviceConnection: @preconcurrency CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard self.peripheral === peripheral, characteristic === statusCharacteristic else { return }
         guard error == nil, let data = characteristic.value else { fail("Could not read the device reply. Reconnect and try again."); return }
-        if phase == .connected { glove.receive(data); return }
+        if phase == .connected {
+            glove.receive(data)
+            if keepsDemoRunningInBackground {
+                onDemoReading?()
+                glove.tick()
+            }
+            return
+        }
         lastReply = String(data: data, encoding: .utf8) ?? "Received \(data.count) bytes"
         guard phase == .verifying else { return }
         probe?.receive(data)

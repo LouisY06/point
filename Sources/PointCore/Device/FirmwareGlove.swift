@@ -8,6 +8,14 @@ import Foundation
     public private(set) var connection: GloveConnection = .disconnected
     public private(set) var capabilities: GloveCapabilities?
     public private(set) var lastHeading: HeadingReading?
+    public private(set) var sensorHealth: FirmwareSensorHealth?
+    public private(set) var orientation: GloveOrientationSample?
+    public private(set) var calibrationID = UUID()
+    public private(set) var relativeCalibrationID = UUID()
+    public private(set) var relativeReference = RelativeOrientationReference()
+    public private(set) var pointingCalibration: PointingCalibration?
+    public var onHeadingChange: ((HeadingReading?) -> Void)?
+    public var northCorrection: MagneticNorthCorrection?
     public private(set) var message: String?
     public private(set) var lastMotorAcknowledgement: Date?
     public var onEvent: ((GloveEvent) -> Void)?
@@ -20,10 +28,15 @@ import Foundation
         let sent: Date
     }
     private var exchange: Exchange?
-    private var queued: (command: HapticCommand, time: Date)?
+    private var queued: (command: HapticCommand, time: Date, requiresPointing: Bool, relativeDemo: Bool)?
     private var token = UInt32.random(in: 1...UInt32.max / 2)
     private var supportsArrival = false
+    private var supportsAttitude = false
+    public private(set) var supportsOrientation = false
     private var lastPoll = Date.distantPast
+    private var motorBusyUntil = Date.distantPast
+    private var automaticMotorUntil = Date.distantPast
+    private var automaticRelativeDemo = false
 
     public init() {}
 
@@ -50,9 +63,21 @@ import Foundation
         queued = nil
         capabilities = nil
         lastHeading = nil
+        sensorHealth = nil
+        orientation = nil
+        pointingCalibration = nil
+        calibrationID = UUID()
+        relativeCalibrationID = UUID()
+        relativeReference = RelativeOrientationReference()
+        onHeadingChange?(nil)
+        northCorrection = nil
         lastMotorAcknowledgement = nil
         supportsArrival = false
+        supportsAttitude = false
+        supportsOrientation = false
         lastPoll = .distantPast
+        motorBusyUntil = .distantPast
+        automaticMotorUntil = .distantPast
         state = .disconnected
         connection = .disconnected
         message = nil
@@ -62,18 +87,53 @@ import Foundation
 
     public func send(_ command: HapticCommand) throws { try send(command, now: Date()) }
 
+    /// Explicit setup test only; automatic cues always require a raised, forward finger.
+    public func testMotor(now: Date = Date()) throws {
+        guard now >= motorBusyUntil else { throw GloveTransportError.busy }
+        try enqueue(.confirm(durationMs: 180, intensity: 160), now: now, requiresPointing: false)
+    }
+
     public func send(_ command: HapticCommand, now: Date) throws {
+        try enqueue(command, now: now, requiresPointing: true)
+    }
+
+    /// Only the explicitly aligned indoor demo may use relative yaw. Outdoor send
+    /// remains north-gated. Freshness, mounting health and hand elevation still apply.
+    public func sendRelativeDemo(_ command: HapticCommand, now: Date = Date()) throws {
+        switch command {
+        case .stop: break
+        case .confirm(let duration, let intensity) where duration <= 180 && intensity <= 204: break
+        default: throw GloveTransportError.unsupported
+        }
+        try enqueue(command, now: now, requiresPointing: true, relativeDemo: true)
+    }
+
+    private func pointingAvailable(now: Date, relativeDemo: Bool) -> Bool {
+        relativeDemo ? relativePointing(now: now) != nil : magneticPointing(now: now) != nil
+    }
+
+    private func enqueue(_ command: HapticCommand, now: Date, requiresPointing: Bool, relativeDemo: Bool = false) throws {
         guard connection == .ready else { throw GloveTransportError.notConnected }
         guard capabilities?.vibration == true,
               command != .vehicleArrived || supportsArrival else { throw GloveTransportError.unsupported }
+        if command != .stop, requiresPointing, (supportsOrientation || relativeDemo), !pointingAvailable(now: now, relativeDemo: relativeDemo) {
+            throw GloveTransportError.unsupported
+        }
         _ = try FirmwareProtocol.request(.haptic, token: token, command: command)
         // A stop cannot be overwritten by another cue before it has been sent.
         guard queued?.command != .stop || command == .stop else { throw GloveTransportError.busy }
-        queued = (command, now)
+        queued = (command, now, requiresPointing, relativeDemo)
         tick(now: now)
     }
 
     public func tick(now: Date = Date()) {
+        if supportsOrientation, automaticMotorUntil > now, !pointingAvailable(now: now, relativeDemo: automaticRelativeDemo) {
+            queued = (.stop, now, false, false)
+        }
+        if let heading = lastHeading, !(0...0.5).contains(now.timeIntervalSince(heading.timestamp)) {
+            invalidateHeading("Waiting for a fresh glove heading")
+            onChange?()
+        }
         if let pending = exchange {
             let limit: TimeInterval = pending.operation == .hello ? 2 : 0.5
             guard now.timeIntervalSince(pending.sent) > limit else { return }
@@ -88,17 +148,28 @@ import Foundation
             return
         }
         guard state == .ready else { return }
-        if let next = queued {
+        if let next = queued, next.command == .stop || now >= motorBusyUntil {
             queued = nil
             // Never replay an old cue after a slow reply. Stops do not expire.
-            if next.command == .stop || (0...0.3).contains(now.timeIntervalSince(next.time)) {
+            if next.command == .stop || ((0...0.3).contains(now.timeIntervalSince(next.time)) &&
+                (!next.requiresPointing || (!supportsOrientation && !next.relativeDemo) || pointingAvailable(now: now, relativeDemo: next.relativeDemo))) {
+                automaticRelativeDemo = next.relativeDemo
+                switch next.command {
+                case .stop: motorBusyUntil = .distantPast; automaticMotorUntil = .distantPast
+                case .confirm(let duration, _):
+                    motorBusyUntil = now.addingTimeInterval(Double(duration) / 1000 + 0.05)
+                    automaticMotorUntil = next.requiresPointing ? motorBusyUntil : .distantPast
+                case .vehicleArrived:
+                    motorBusyUntil = now.addingTimeInterval(0.83)
+                    automaticMotorUntil = next.requiresPointing ? motorBusyUntil : .distantPast
+                }
                 transmit(.haptic, command: next.command, now: now)
                 return
             }
         }
         if capabilities?.heading == true, now.timeIntervalSince(lastPoll) >= 0.1 {
             lastPoll = now
-            transmit(.heading, now: now)
+            transmit(supportsOrientation ? .orientation : supportsAttitude ? .attitude : .heading, now: now)
         }
     }
 
@@ -112,28 +183,131 @@ import Foundation
         case .capabilities(let value):
             capabilities = value
             supportsArrival = data.last.map { $0 & 4 != 0 } ?? false
+            supportsOrientation = data.last.map { $0 & 16 != 0 } ?? false
+            supportsAttitude = data.last.map { $0 & 8 != 0 } ?? false
             state = .ready
             connection = .ready
             message = value.vibration ? "Glove vibration available" : "Motor support pending"
             // Stop before advertising readiness, since a controller may synchronously send.
-            if value.vibration { queued = (.stop, now) }
+            if value.vibration { queued = (.stop, now, false, false) }
             tick(now: now)
+            guard state == .ready else { return }
             onEvent?(.connection(.ready))
             onEvent?(.capabilities(value))
-        case .heading(let degrees, let accuracy, let reference, let age):
+        case .orientation(let quaternion, let age, let health):
+            let previouslyNorthReady = sensorHealth?.fusionBlockingReason == nil && sensorHealth != nil
+            sensorHealth = health
+            guard elapsed + age <= 0.5 else {
+                orientation = nil
+                invalidateHeading("Waiting for a fresh glove orientation"); onChange?(); return
+            }
+            let sample = GloveOrientationSample(quaternion: quaternion,
+                timestamp: now.addingTimeInterval(-(elapsed + age)), health: health)
+            relativeReference.update(previous: orientation, current: sample)
+            orientation = sample
+            if !previouslyNorthReady, health.fusionBlockingReason == nil { calibrationID = UUID() }
+            if let reason = health.mountingBlockingReason {
+                // A temporary sensor-quality dip does not change the physical mounting.
+                // Retain the mapping while health gates all automatic haptics.
+                invalidateHeading(reason); onChange?(); return
+            }
+            if let reason = health.fusionBlockingReason {
+                // A yaw-reference change leaves the sensor-local finger vector
+                // intact, but invalidates any AR-room-to-magnetic-north offset.
+                if previouslyNorthReady { calibrationID = UUID() }
+                invalidateHeading(reason); onChange?(); return
+            }
+            guard let pointingCalibration else {
+                invalidateHeading("Glove pointing orientation needs setup"); onChange?(); return
+            }
+            guard let magnetic = pointingCalibration.magneticHeading(sample, now: now) else {
+                invalidateHeading("Raise your hand and point forward · Keep your finger within 30° of level"); onChange?(); return
+            }
+            guard let reading = northCorrection?.apply(to: magnetic, now: now), reading.accuracyDegrees <= 25 else {
+                invalidateHeading("Waiting for an accurate true-north correction"); onChange?(); return
+            }
+            lastHeading = reading
+            message = "Glove pointing ready"
+            onHeadingChange?(reading)
+            onEvent?(.heading(reading))
+        case .heading(let degrees, let accuracy, let reference, let age, let health):
+            sensorHealth = health
             // Bound sample age conservatively by FULL request round trip plus firmware
             // sample age. A buffered/late sample never becomes fresh just on receipt.
-            guard elapsed + age <= 0.5 else { onChange?(); return }
-            let reading = HeadingReading(degrees: degrees, accuracyDegrees: accuracy,
+            guard elapsed + age <= 0.5 else {
+                invalidateHeading("Waiting for a fresh glove heading"); onChange?(); return
+            }
+            if let reason = health?.blockingReason {
+                invalidateHeading(reason); onChange?(); return
+            }
+            var reading = HeadingReading(degrees: degrees, accuracyDegrees: accuracy,
                                          timestamp: now.addingTimeInterval(-(elapsed + age)), reference: reference)
+            if health?.source == .bno055, reference == .magneticNorth {
+                guard let corrected = northCorrection?.apply(to: reading, now: now) else {
+                    invalidateHeading("Waiting for the phone’s true-north correction"); onChange?(); return
+                }
+                reading = corrected
+            }
+            guard reading.accuracyDegrees <= 25 else {
+                invalidateHeading("Glove compass uncertainty is too high · Direction paused"); onChange?(); return
+            }
             lastHeading = reading
-            message = reference == .trueNorth ? "Glove heading available" : "Glove needs a north reference for navigation"
+            onHeadingChange?(reading)
+            message = reading.reference == .trueNorth ? "Glove heading available" : "Glove needs a north reference for navigation"
             onEvent?(.heading(reading))
         case .haptic(let accepted):
             guard accepted else { fail("The glove rejected a motor command. Check its firmware."); return }
             lastMotorAcknowledgement = now
         }
         onChange?()
+    }
+
+    public func pointingSetupBlockingReason(now: Date = Date()) -> String? {
+        guard connection == .ready else { return "Connect your glove to begin." }
+        guard supportsOrientation else { return "Update glove firmware to enable pointing setup." }
+        guard let orientation, (0...0.5).contains(now.timeIntervalSince(orientation.timestamp)) else {
+            return "Waiting for a fresh glove reading…"
+        }
+        return orientation.health.mountingBlockingReason
+    }
+
+    public func magneticPointing(now: Date = Date()) -> HeadingReading? {
+        guard connection == .ready, let orientation else { return nil }
+        return pointingCalibration?.magneticHeading(orientation, now: now)
+    }
+
+    public func relativePointing(now: Date = Date()) -> HeadingReading? {
+        guard connection == .ready, let orientation else { return nil }
+        guard let reading = pointingCalibration?.relativeHeading(orientation, now: now) else { return nil }
+        return relativeReference.apply(to: reading)
+    }
+
+    public func calibrate(_ calibration: PointingCalibration) {
+        guard supportsOrientation, connection == .ready else { return }
+        pointingCalibration = calibration
+        calibrationID = UUID()
+        relativeCalibrationID = UUID()
+        relativeReference = RelativeOrientationReference()
+        invalidateHeading("Checking calibrated glove direction…")
+        onChange?()
+    }
+
+    public func resetPointingCalibration() {
+        pointingCalibration = nil
+        calibrationID = UUID()
+        relativeCalibrationID = UUID()
+        relativeReference = RelativeOrientationReference()
+        invalidateHeading("Glove pointing orientation needs setup")
+        try? send(.stop)
+        onChange?()
+    }
+
+    private func invalidateHeading(_ reason: String) {
+        let hadHeading = lastHeading != nil
+        lastHeading = nil
+        onHeadingChange?(nil)
+        message = reason
+        if hadHeading { onEvent?(.headingUnavailable) }
     }
 
     private func transmit(_ operation: FirmwareProtocol.Operation, command: HapticCommand? = nil, now: Date) {
@@ -155,6 +329,14 @@ import Foundation
         queued = nil
         lastHeading = nil
         capabilities = nil
+        sensorHealth = nil
+        orientation = nil
+        pointingCalibration = nil
+        calibrationID = UUID()
+        relativeCalibrationID = UUID()
+        relativeReference = RelativeOrientationReference()
+        onHeadingChange?(nil)
+        northCorrection = nil
         state = .failed
         connection = .disconnected
         message = text

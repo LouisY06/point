@@ -30,12 +30,20 @@ import Testing
         coordinator.cueArrivalsWhileWalking = false
         try coordinator.start(makePlan())
         coordinator.confirmAtStop()
-        try await Task.sleep(for: .milliseconds(60))
+        // Wait for the observable transition, not a 60 ms wall-clock guess when
+        // the main actor is also running other suites.
+        for _ in 0..<100 {
+            if transit.arrivalsQueue.isEmpty && coordinator.phase.isRiding { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(transit.arrivalsQueue.isEmpty)
         #expect(coordinator.phase.isRiding)
         coordinator.confirmBoarded()
         // Three missing vehicles should reach lost tracking through the actual polling loop.
-        try await Task.sleep(for: .milliseconds(80))
+        for _ in 0..<100 {
+            if coordinator.phase == .riding(leg: 1, tripID: "trip-A", confirmed: true, tracking: .lost) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(coordinator.phase == .riding(leg: 1, tripID: "trip-A", confirmed: true, tracking: .lost))
         coordinator.stop()
     }

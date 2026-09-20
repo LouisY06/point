@@ -22,7 +22,7 @@ import Foundation
         self.onProgress = onProgress
     }
 
-    public func speak(_ text: String, onFinished: @escaping () -> Void = {}) {
+    public func speak(_ text: String, onFailed: @escaping () -> Void = {}, onFinished: @escaping () -> Void = {}) {
         stop()
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         onProgress("")
@@ -37,7 +37,7 @@ import Foundation
             // Invalidate before calling out so duplicate or late delegate events cannot reopen it.
             self.generation = UUID()
             self.pending = nil
-            if succeeded { onFinished() }
+            if succeeded { onFinished() } else { onFailed() }
         }
         guard let service = synthesizer() else {
             usedSystemFallback = true

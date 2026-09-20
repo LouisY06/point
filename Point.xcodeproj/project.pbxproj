@@ -12,11 +12,16 @@
 		2BA19A178159EECDFC94F6F5 /* RouteMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D48E56DBA43D3ED3DE0BEC /* RouteMapView.swift */; };
 		66576C16C7901F6F4019BC2B /* DeviceSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADDFC6E6B5EC1873BD060CB7 /* DeviceSetupView.swift */; };
 		6887CDA3316BC22A1313B003 /* PointApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B855E70E6061ECCA92C0E9B5 /* PointApp.swift */; };
-		69E6008D47159A4CE9779FA1 /* PhoneHapticPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B55E072BA38077EF749A0F6 /* PhoneHapticPlayer.swift */; };
+		74123AFCB301E37E603093F6 /* PocketActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98721971A73F78C4CBCF67AA /* PocketActivityAttributes.swift */; };
 		75F3FFB53E0E10C878E35B51 /* DeviceConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D9D3A79EA5677961D2F65B0 /* DeviceConnection.swift */; };
 		78227478E265F628353DF278 /* PointHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 502E38DB6BBE2F2B65D3A016 /* PointHomeView.swift */; };
+		81C0CE5C262877ED2D082749 /* PocketBackgroundActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85D2415593F1B4AAC3525A9F /* PocketBackgroundActivity.swift */; };
 		8BEF968689523746A0E8DAFE /* PointTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B0D02EC547987D58B1A1878 /* PointTheme.swift */; };
+		90FF6D5FD7C986697E21BC91 /* PocketActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98721971A73F78C4CBCF67AA /* PocketActivityAttributes.swift */; };
+		A09EE070761C0BF45E9471BF /* PocketActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B979FAE72336AB3E4A738A4 /* PocketActivityWidget.swift */; };
+		B5E0F492887B3AB406475A70 /* PocketMotionTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97FB675F42E35D329045E749 /* PocketMotionTracker.swift */; };
 		B70487EC620464F5E8443FD0 /* TransitReviewFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C1E4930DC73DDFB5C564D6B /* TransitReviewFixtures.swift */; };
+		B87FBED379D1963FA399D186 /* PointPocketWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3E2E61B5E5C7A8923A0C7890 /* PointPocketWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BB5E36130F8A046093E9ADFA /* TransitJourneyViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 286B5A27A2062F374E5E9EF1 /* TransitJourneyViews.swift */; };
 		BBDD7648D25953C3F5CDCA7B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 85B5ADE3ABD76CA57AB7D5C5 /* Assets.xcassets */; };
 		BFB4F057E9DBC376FC4E4A46 /* HandMotionPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5E999FC2AD8E110E41561BD /* HandMotionPlayer.swift */; };
@@ -24,25 +29,50 @@
 		C527F6FC6E384358F9872A2D /* PointViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4242BA39F321C6A7AFC0C442 /* PointViewModel.swift */; };
 		C9EEADD9F8F0F87605418583 /* GloveOutline.swift in Sources */ = {isa = PBXBuildFile; fileRef = B33CDC5FFA83E2341B8C55F6 /* GloveOutline.swift */; };
 		D621B20AE7A54B4F6A2C6453 /* RouteBottomSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2D170B67C877B9A72596F03 /* RouteBottomSheet.swift */; };
-		DB4C869FE8887534D06D7021 /* PhonePointingStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02F09C01E9FB18FB95BB9CAA /* PhonePointingStatusView.swift */; };
-		DC1B0B3D2016DEA3E03B14F1 /* PhoneBeaconTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3104C3256910436CC46984A4 /* PhoneBeaconTester.swift */; };
 		F4AED6B81DA7DF86F2D236C5 /* CameraBeaconTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD325040940B1F4D58F75C6D /* CameraBeaconTest.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		0D6E604C022357765437559A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A57F9B3877E11C47687D2B00 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0BA1F51CE6D161C6DE375EF5;
+			remoteInfo = PointPocketWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		D677858E3AF833D68A643644 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B87FBED379D1963FA399D186 /* PointPocketWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
-		02F09C01E9FB18FB95BB9CAA /* PhonePointingStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhonePointingStatusView.swift; sourceTree = "<group>"; };
+		0648492CF16AD2981E4306F6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		0B0D02EC547987D58B1A1878 /* PointTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointTheme.swift; sourceTree = "<group>"; };
 		0D9D3A79EA5677961D2F65B0 /* DeviceConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceConnection.swift; sourceTree = "<group>"; };
 		286B5A27A2062F374E5E9EF1 /* TransitJourneyViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransitJourneyViews.swift; sourceTree = "<group>"; };
-		3104C3256910436CC46984A4 /* PhoneBeaconTester.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneBeaconTester.swift; sourceTree = "<group>"; };
+		3E2E61B5E5C7A8923A0C7890 /* PointPocketWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PointPocketWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		4242BA39F321C6A7AFC0C442 /* PointViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointViewModel.swift; sourceTree = "<group>"; };
-		44CB5A7C8262D0D8A5641262 /* Point.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Point.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		44CB5A7C8262D0D8A5641262 /* Point.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Point.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4C1E4930DC73DDFB5C564D6B /* TransitReviewFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransitReviewFixtures.swift; sourceTree = "<group>"; };
 		502E38DB6BBE2F2B65D3A016 /* PointHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointHomeView.swift; sourceTree = "<group>"; };
-		5B55E072BA38077EF749A0F6 /* PhoneHapticPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneHapticPlayer.swift; sourceTree = "<group>"; };
 		5F777B621A3D065A1E1DFBCD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		85B5ADE3ABD76CA57AB7D5C5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		85D2415593F1B4AAC3525A9F /* PocketBackgroundActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PocketBackgroundActivity.swift; sourceTree = "<group>"; };
+		8B979FAE72336AB3E4A738A4 /* PocketActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PocketActivityWidget.swift; sourceTree = "<group>"; };
 		902411195D457116B06956C0 /* HackMIT */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HackMIT; path = .; sourceTree = SOURCE_ROOT; };
+		97FB675F42E35D329045E749 /* PocketMotionTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PocketMotionTracker.swift; sourceTree = "<group>"; };
+		98721971A73F78C4CBCF67AA /* PocketActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PocketActivityAttributes.swift; sourceTree = "<group>"; };
 		A5E999FC2AD8E110E41561BD /* HandMotionPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandMotionPlayer.swift; sourceTree = "<group>"; };
 		AD325040940B1F4D58F75C6D /* CameraBeaconTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraBeaconTest.swift; sourceTree = "<group>"; };
 		ADDFC6E6B5EC1873BD060CB7 /* DeviceSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSetupView.swift; sourceTree = "<group>"; };
@@ -74,13 +104,32 @@
 			path = HandMotion;
 			sourceTree = "<group>";
 		};
+		3ED5D45947FFD8F31C1DE776 /* Widgets */ = {
+			isa = PBXGroup;
+			children = (
+				0648492CF16AD2981E4306F6 /* Info.plist */,
+				8B979FAE72336AB3E4A738A4 /* PocketActivityWidget.swift */,
+			);
+			path = Widgets;
+			sourceTree = "<group>";
+		};
 		4124EC47F676BDF70CB5C60E = {
 			isa = PBXGroup;
 			children = (
 				717ABC221F933C8625266921 /* App */,
 				B5E1A6B588175D470A5DDC00 /* Packages */,
+				60C03BB23099A8B84E4F28E3 /* Shared */,
+				3ED5D45947FFD8F31C1DE776 /* Widgets */,
 				C85C7A624D66AC7242169C74 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		60C03BB23099A8B84E4F28E3 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				98721971A73F78C4CBCF67AA /* PocketActivityAttributes.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		717ABC221F933C8625266921 /* App */ = {
@@ -94,9 +143,8 @@
 				A5E999FC2AD8E110E41561BD /* HandMotionPlayer.swift */,
 				AF3A6F448576041F5D7D1616 /* HandVoiceInteraction.swift */,
 				5F777B621A3D065A1E1DFBCD /* Info.plist */,
-				3104C3256910436CC46984A4 /* PhoneBeaconTester.swift */,
-				5B55E072BA38077EF749A0F6 /* PhoneHapticPlayer.swift */,
-				02F09C01E9FB18FB95BB9CAA /* PhonePointingStatusView.swift */,
+				85D2415593F1B4AAC3525A9F /* PocketBackgroundActivity.swift */,
+				97FB675F42E35D329045E749 /* PocketMotionTracker.swift */,
 				B855E70E6061ECCA92C0E9B5 /* PointApp.swift */,
 				502E38DB6BBE2F2B65D3A016 /* PointHomeView.swift */,
 				0B0D02EC547987D58B1A1878 /* PointTheme.swift */,
@@ -130,6 +178,7 @@
 			isa = PBXGroup;
 			children = (
 				44CB5A7C8262D0D8A5641262 /* Point.app */,
+				3E2E61B5E5C7A8923A0C7890 /* PointPocketWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -137,6 +186,23 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		0BA1F51CE6D161C6DE375EF5 /* PointPocketWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D5D72743BF0E7621F333E950 /* Build configuration list for PBXNativeTarget "PointPocketWidget" */;
+			buildPhases = (
+				16A7AA446A81158A30607512 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PointPocketWidget;
+			packageProductDependencies = (
+			);
+			productName = PointPocketWidget;
+			productReference = 3E2E61B5E5C7A8923A0C7890 /* PointPocketWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		E6ACFAA47FB58DF0FD6244C4 /* Point */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 1C4A7B91B0A801C88B918671 /* Build configuration list for PBXNativeTarget "Point" */;
@@ -144,10 +210,12 @@
 				7BE86C267230A3DEE94DC72B /* Sources */,
 				A23A194C3B5A7D95C19AEB96 /* Resources */,
 				16814DB9FBBC2EB46D135236 /* Frameworks */,
+				D677858E3AF833D68A643644 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				395F0D08FE12046378E7A865 /* PBXTargetDependency */,
 			);
 			name = Point;
 			packageProductDependencies = (
@@ -165,6 +233,14 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					0BA1F51CE6D161C6DE375EF5 = {
+						DevelopmentTeam = YSN2XT3872;
+					};
+					E6ACFAA47FB58DF0FD6244C4 = {
+						DevelopmentTeam = YSN2XT3872;
+					};
+				};
 			};
 			buildConfigurationList = 5122EB488A1461890A7D064D /* Build configuration list for PBXProject "Point" */;
 			developmentRegion = en;
@@ -184,6 +260,7 @@
 			projectRoot = "";
 			targets = (
 				E6ACFAA47FB58DF0FD6244C4 /* Point */,
+				0BA1F51CE6D161C6DE375EF5 /* PointPocketWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -201,6 +278,15 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		16A7AA446A81158A30607512 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				90FF6D5FD7C986697E21BC91 /* PocketActivityAttributes.swift in Sources */,
+				A09EE070761C0BF45E9471BF /* PocketActivityWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		7BE86C267230A3DEE94DC72B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -211,9 +297,9 @@
 				C9EEADD9F8F0F87605418583 /* GloveOutline.swift in Sources */,
 				BFB4F057E9DBC376FC4E4A46 /* HandMotionPlayer.swift in Sources */,
 				166B3B41624CBEB2A38C9F35 /* HandVoiceInteraction.swift in Sources */,
-				DC1B0B3D2016DEA3E03B14F1 /* PhoneBeaconTester.swift in Sources */,
-				69E6008D47159A4CE9779FA1 /* PhoneHapticPlayer.swift in Sources */,
-				DB4C869FE8887534D06D7021 /* PhonePointingStatusView.swift in Sources */,
+				74123AFCB301E37E603093F6 /* PocketActivityAttributes.swift in Sources */,
+				81C0CE5C262877ED2D082749 /* PocketBackgroundActivity.swift in Sources */,
+				B5E0F492887B3AB406475A70 /* PocketMotionTracker.swift in Sources */,
 				6887CDA3316BC22A1313B003 /* PointApp.swift in Sources */,
 				78227478E265F628353DF278 /* PointHomeView.swift in Sources */,
 				8BEF968689523746A0E8DAFE /* PointTheme.swift in Sources */,
@@ -226,6 +312,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		395F0D08FE12046378E7A865 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0BA1F51CE6D161C6DE375EF5 /* PointPocketWidget */;
+			targetProxy = 0D6E604C022357765437559A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		04C60F00BDC841104A3009D6 /* Release */ = {
@@ -242,7 +336,7 @@
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to your development voice and maps service.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Your location guides you toward the next point on your walking route.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Say where you want to go to search for a destination.";
-				INFOPLIST_KEY_NSMotionUsageDescription = "Check the screen-down pointing grip when testing navigation with your phone.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Estimate your steps and turns during the experimental pocket demo.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Show your words on screen as you say where you want to go.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -273,7 +367,7 @@
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to your development voice and maps service.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Your location guides you toward the next point on your walking route.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Say where you want to go to search for a destination.";
-				INFOPLIST_KEY_NSMotionUsageDescription = "Check the screen-down pointing grip when testing navigation with your phone.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Estimate your steps and turns during the experimental pocket demo.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Show your words on screen as you say where you want to go.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -353,6 +447,27 @@
 			};
 			name = Debug;
 		};
+		5658A6F7D60D08357803AF6E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = YSN2XT3872;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Widgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.point.navigator.pocket;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		AAC4781AEEA5DA86EDF826B3 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -409,6 +524,27 @@
 			};
 			name = Release;
 		};
+		B68532FDA14A910370451C67 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = YSN2XT3872;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Widgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.point.navigator.pocket;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -426,6 +562,15 @@
 			buildConfigurations = (
 				159F964B77389D0D283B4E6E /* Debug */,
 				AAC4781AEEA5DA86EDF826B3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D5D72743BF0E7621F333E950 /* Build configuration list for PBXNativeTarget "PointPocketWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5658A6F7D60D08357803AF6E /* Debug */,
+				B68532FDA14A910370451C67 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

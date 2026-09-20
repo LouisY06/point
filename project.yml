@@ -10,22 +10,27 @@ targets:
   Point:
     type: application
     platform: iOS
-    sources: [App]
+    sources: [App, Shared]
     info:
       path: App/Info.plist
       properties:
-        UIBackgroundModes: [location]
+        UIBackgroundModes: [location, bluetooth-central, audio]
+        NSSupportsLiveActivities: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     dependencies:
       - package: PointCore
+      - target: PointPocketWidget
+        embed: true
     settings:
       base:
+        DEVELOPMENT_TEAM: YSN2XT3872
         PRODUCT_BUNDLE_IDENTIFIER: com.point.navigator
         SWIFT_VERSION: "5.0"
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSMotionUsageDescription: Estimate your steps and turns during the experimental pocket demo.
         INFOPLIST_KEY_NSCameraUsageDescription: Place nearby test beacons using on-device camera tracking. No video is recorded.
-        INFOPLIST_KEY_NSMotionUsageDescription: Check the screen-down pointing grip when testing navigation with your phone.
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Say where you want to go to search for a destination.
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Show your words on screen as you say where you want to go.
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: Your location guides you toward the next point on your walking route.
@@ -34,6 +39,28 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+  PointPocketWidget:
+    type: app-extension
+    platform: iOS
+    sources: [Widgets, Shared]
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Point
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        DEVELOPMENT_TEAM: YSN2XT3872
+        PRODUCT_BUNDLE_IDENTIFIER: com.point.navigator.pocket
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
         TARGETED_DEVICE_FAMILY: "1,2"
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"

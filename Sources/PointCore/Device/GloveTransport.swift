@@ -19,6 +19,7 @@ public enum GloveEvent {
     case connection(GloveConnection)
     case capabilities(GloveCapabilities)
     case heading(HeadingReading)
+    case headingUnavailable
     case gesture(GloveGesture)
     case battery(percent: Int)
 }

@@ -27,8 +27,7 @@ import Foundation
         glove.onEvent = { [weak self] event in self?.receive(event) }
     }
 
-    /// Select physical hardware only for real glove mode; demo and phone mode keep
-    /// their own transport. Never transfer heading or pending cues between devices.
+    /// Real navigation uses hardware; the explicit sample route uses a simulator. Never transfer heading or pending cues between devices.
     public func useTransport(_ transport: any GloveTransport, activate: Bool = true) {
         resetFeedback()
         glove.onEvent = nil
@@ -98,6 +97,9 @@ import Foundation
             guard connection == .ready, capabilities?.heading == true else { return }
             guard gloveHeading.map({ reading.timestamp > $0.timestamp }) ?? true else { return }
             gloveHeading = reading
+        case .headingUnavailable:
+            gloveHeading = nil
+            resetFeedback()
         case .battery(let percent): batteryPercent = (0...100).contains(percent) ? percent : nil
         case .gesture(let gesture):
             guard connection == .ready, capabilities?.gestures == true,

@@ -3,11 +3,13 @@ import Foundation
 /// Proposed S3 protocol v1. The Arduino circuit sketch and legacy C6 echo service
 /// do NOT implement this contract. See docs/FIRMWARE_APP_PROTOCOL.md.
 public enum FirmwareProtocol {
-    public enum Operation: UInt8 { case hello = 1, heading = 2, haptic = 3 }
+    public enum Operation: UInt8 { case hello = 1, heading = 2, haptic = 3, attitude = 4, orientation = 5 }
     public enum PacketError: Error { case malformed, unsupportedCommand }
     public enum Reply {
         case capabilities(GloveCapabilities)
-        case heading(degrees: Double, accuracy: Double, reference: HeadingReference, age: TimeInterval)
+        case heading(degrees: Double, accuracy: Double, reference: HeadingReference, age: TimeInterval,
+                     health: FirmwareSensorHealth?)
+        case orientation(GloveQuaternion, age: TimeInterval, health: FirmwareSensorHealth)
         case haptic(accepted: Bool)
     }
 
@@ -37,16 +39,35 @@ public enum FirmwareProtocol {
         func u16(_ i: Int) -> UInt16 { UInt16(b[i]) | UInt16(b[i + 1]) << 8 }
         switch operation {
         case .hello:
-            guard b.count == 8, b[7] & ~UInt8(7) == 0,
-                  b[7] & 4 == 0 || b[7] & 2 != 0 else { throw PacketError.malformed }
+            guard b.count == 8, b[7] & ~UInt8(31) == 0,
+                  b[7] & 4 == 0 || b[7] & 2 != 0,
+                  b[7] & 8 == 0 || b[7] & 1 != 0,
+                  b[7] & 16 == 0 || b[7] & 9 == 9 else { throw PacketError.malformed }
             // v1 intentionally has no gesture/battery messages. Bit 2 advertises the
             // bounded vehicle-arrival cue, consumed separately by the transport.
             return .capabilities(GloveCapabilities(heading: b[7] & 1 != 0, gestures: false, vibration: b[7] & 2 != 0))
-        case .heading:
-            guard b.count == 14, u16(7) < 36000, u16(9) <= 18000, b[11] <= 2 else { throw PacketError.malformed }
+        case .heading, .attitude:
+            guard b.count == (operation == .attitude ? 17 : 14), u16(7) < 36000,
+                  u16(9) <= 18000, b[11] <= 2 else { throw PacketError.malformed }
+            var health: FirmwareSensorHealth?
+            if operation == .attitude {
+                guard let source = FirmwareSensorHealth.Source(rawValue: b[14]), b[16] & 0xF0 == 0 else {
+                    throw PacketError.malformed
+                }
+                health = FirmwareSensorHealth(source: source, calibration: b[15], flags: b[16])
+            }
             let reference: HeadingReference = b[11] == 0 ? .relative : b[11] == 1 ? .magneticNorth : .trueNorth
             return .heading(degrees: Double(u16(7)) / 100, accuracy: Double(u16(9)) / 100,
-                            reference: reference, age: Double(u16(12)) / 1000)
+                            reference: reference, age: Double(u16(12)) / 1000, health: health)
+        case .orientation:
+            guard b.count == 20, let source = FirmwareSensorHealth.Source(rawValue: b[17]),
+                  b[19] & 0xF0 == 0 else { throw PacketError.malformed }
+            func component(_ i: Int) -> Double { Double(Int16(bitPattern: u16(i))) / 16384 }
+            guard let quaternion = GloveQuaternion(w: component(7), x: component(9), y: component(11), z: component(13)) else {
+                throw PacketError.malformed
+            }
+            return .orientation(quaternion, age: Double(u16(15)) / 1000,
+                                health: FirmwareSensorHealth(source: source, calibration: b[18], flags: b[19]))
         case .haptic:
             guard b.count == 8, b[7] <= 1 else { throw PacketError.malformed }
             return .haptic(accepted: b[7] == 0)

@@ -3,6 +3,13 @@ import AVFoundation
 import Foundation
 
 @MainActor public final class PhoneSpeechPlayer: NSObject, SpeechPlaying, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
+    /// Set only while a foreground conversation owns the microphone audio session.
+    public weak var conversationEngine: AVAudioEngine?
+    private var enginePlayer: AVAudioPlayerNode?
+    private var outputGeneration = UUID()
+    private var renderedFile: AVAudioFile?
+    private var renderedURL: URL?
+    private var renderingSystemVoice = false
     private var audioPlayer: AVAudioPlayer?
     private let systemVoice = AVSpeechSynthesizer()
     private var ownsSession = false
@@ -26,6 +33,14 @@ import Foundation
 
     public func play(_ audio: SpeechAudio, progress: @escaping (String) -> Void, completion: @escaping (Bool) -> Void) throws {
         stop()
+        if let engine = conversationEngine, engine.isRunning {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("point-reply-\(UUID().uuidString).audio")
+            try audio.data.write(to: url)
+            renderedURL = url
+            let file = try AVAudioFile(forReading: url)
+            try playOnEngine(file, engine: engine, text: audio.text, audio: audio, progress: progress, completion: completion)
+            return
+        }
         let player = try AVAudioPlayer(data: audio.data)
         player.delegate = self
         try activateSession()
@@ -47,7 +62,9 @@ import Foundation
 
     public func speakSystem(_ text: String, progress: @escaping (String) -> Void, completion: @escaping (Bool) -> Void) {
         stop()
-        do { try activateSession() } catch { progress(text); completion(false); return }
+        if conversationEngine?.isRunning != true {
+            do { try activateSession() } catch { progress(text); completion(false); return }
+        }
         self.progress = progress
         self.completion = completion
         fullText = text
@@ -58,10 +75,80 @@ import Foundation
             ?? AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.95
         currentUtterance = utterance
-        systemVoice.speak(utterance)
+        if conversationEngine?.isRunning == true {
+            renderingSystemVoice = true
+            let generation = outputGeneration
+            systemVoice.write(utterance) { [weak self] buffer in
+                guard let pcm = buffer as? AVAudioPCMBuffer else { return }
+                Task { @MainActor in
+                    guard let self, self.outputGeneration == generation else { return }
+                    do {
+                        if pcm.frameLength > 0 {
+                            if self.renderedFile == nil {
+                                let url = FileManager.default.temporaryDirectory.appendingPathComponent("point-system-\(UUID().uuidString).caf")
+                                self.renderedURL = url
+                                self.renderedFile = try AVAudioFile(forWriting: url, settings: pcm.format.settings,
+                                                                   commonFormat: pcm.format.commonFormat, interleaved: pcm.format.isInterleaved)
+                            }
+                            try self.renderedFile?.write(from: pcm)
+                        } else {
+                            self.renderedFile = nil
+                            guard let url = self.renderedURL, let engine = self.conversationEngine, engine.isRunning else {
+                                self.finishPlayback(successfully: false); return
+                            }
+                            let file = try AVAudioFile(forReading: url)
+                            try self.playOnEngine(file, engine: engine, text: text, audio: nil, progress: progress, completion: completion)
+                        }
+                    } catch { self.finishPlayback(successfully: false) }
+                }
+            }
+        } else { systemVoice.speak(utterance) }
+    }
+
+    private func playOnEngine(_ file: AVAudioFile, engine: AVAudioEngine, text: String, audio: SpeechAudio?,
+                              progress: @escaping (String) -> Void, completion: @escaping (Bool) -> Void) throws {
+        guard file.length > 0 else { throw ServiceError.invalidAudio }
+        let player: AVAudioPlayerNode
+        if let existing = enginePlayer, existing.engine === engine { player = existing }
+        else {
+            player = AVAudioPlayerNode()
+            engine.attach(player)
+        }
+        enginePlayer = player
+        self.progress = progress
+        self.completion = completion
+        fullText = text
+        engine.connect(player, to: engine.mainMixerNode, format: file.processingFormat)
+        let generation = outputGeneration
+        player.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.outputGeneration == generation else { return }
+                self.finishPlayback(successfully: true)
+            }
+        }
+        player.play()
+        if let audio {
+            captionTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    guard let self, self.outputGeneration == generation else { return }
+                    if let time = player.lastRenderTime, let position = player.playerTime(forNodeTime: time) {
+                        progress(audio.visibleText(at: Double(position.sampleTime) / position.sampleRate))
+                    }
+                    try? await Task.sleep(for: .milliseconds(33))
+                }
+            }
+        } else { progress(text) }
     }
 
     public func stop() {
+        outputGeneration = UUID()
+        // Stopping playback must not remove a source from the live recording graph.
+        // Reuse the node on the next reply; the engine releases it at teardown.
+        enginePlayer?.stop()
+        renderedFile = nil
+        if let renderedURL { try? FileManager.default.removeItem(at: renderedURL) }
+        renderedURL = nil
+        renderingSystemVoice = false
         captionTask?.cancel()
         captionTask = nil
         progress = nil
@@ -110,14 +197,14 @@ import Foundation
 
     nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
-            guard self.currentUtterance === utterance else { return }
+            guard self.currentUtterance === utterance, !self.renderingSystemVoice else { return }
             self.finishPlayback(successfully: true)
         }
     }
 
     nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor in
-            guard self.currentUtterance === utterance else { return }
+            guard self.currentUtterance === utterance, !self.renderingSystemVoice else { return }
             self.finishPlayback(successfully: false)
         }
     }
@@ -125,7 +212,7 @@ import Foundation
     nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, willSpeakRangeOfSpeechString characterRange: NSRange,
                                               utterance: AVSpeechUtterance) {
         Task { @MainActor in
-            guard self.currentUtterance === utterance else { return }
+            guard self.currentUtterance === utterance, !self.renderingSystemVoice else { return }
             let text = utterance.speechString as NSString
             self.progress?(text.substring(to: min(text.length, NSMaxRange(characterRange))))
         }

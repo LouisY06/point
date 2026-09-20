@@ -15,7 +15,7 @@ struct VoiceConfigurationTests {
         #expect(!reply.contains("02114"))
         let park = PlaceCandidate(id: "park", name: "Boston Common", address: "Boston, MA",
                                   coordinate: place.coordinate)
-        #expect(NavigationSpeech.routeReady(for: park) == "Your route to Boston Common is ready. Tap Start when you're ready.")
+        #expect(NavigationSpeech.routeReady(for: park, handsFree: true) == "Your route to Boston Common is ready. Say start when you’re ready.")
     }
 
     @Test func readsQuotedValuesAndEnvironmentOverridesWithoutTreatingBlankAsAKey() {
@@ -78,6 +78,22 @@ struct VoiceConfigurationTests {
         finished(true)
         finished(true)
         #expect(listeningStarts == 1)
+    }
+
+    @Test func playbackFailureIsReportedOnceAndCancellationStaysSilent() throws {
+        let player = RecordingSpeechPlayer()
+        let feedback = SpokenFeedback(player: player, synthesizer: { nil })
+        var failures = 0
+        feedback.speak("Which place?", onFailed: { failures += 1 })
+        let failed = try #require(player.completions.last)
+        failed(false)
+        failed(false)
+        #expect(failures == 1)
+        feedback.speak("Where instead?", onFailed: { failures += 1 })
+        let cancelled = try #require(player.completions.last)
+        feedback.stop()
+        cancelled(false)
+        #expect(failures == 1)
     }
 
     @Test func cancelledSupersededAndFailedPlaybackNeverReopensMicrophone() throws {

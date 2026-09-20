@@ -7,6 +7,23 @@ import UIKit
 
 @MainActor final class PointViewModel: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
     enum Stage { case home, recording, searching, clarifying, choosing, journeyChoice, route, indoorDemo }
+    enum VoicePhase { case idle, starting, listening, thinking, speaking }
+    @Published private(set) var voicePhase: VoicePhase = .idle
+    @Published private(set) var conversationActive = false
+    private var voiceContext: Stage = .home
+    private var replyStartTask: Task<Void, Never>?
+    private var voiceGeneration = UUID()
+    private var lastSpokenReply = ""
+    var isListening: Bool { voicePhase == .listening }
+    var voiceStatus: String {
+        switch voicePhase {
+        case .idle: return "Talk to Point"
+        case .starting: return "Opening microphone"
+        case .listening: return "Listening · Pause when you’re done"
+        case .thinking: return "Thinking"
+        case .speaking: return recorder.supportsInterruption && conversationActive ? "Point is speaking · You can interrupt" : "Point is speaking"
+        }
+    }
     @Published var stage: Stage = .home
     @Published var transcript = ""
     @Published var candidates: [PlaceCandidate] = []
@@ -24,7 +41,6 @@ import UIKit
     @Published var pointingAligned = false
     @Published var demoInFlight = false
     @Published var currentLocation: CLLocation?
-    @Published var usePhoneAsGlove = true
     @Published private(set) var journeyState: JourneyState = .idle
     @Published private(set) var activeBeaconIndex: Int?
     // Public transportation: walk → ride → walk, coordinated above the walking controller. There is
@@ -46,7 +62,6 @@ import UIKit
     @Published private(set) var pendingTransitOffer = false
     private var pendingJourneyPlace: PlaceCandidate?
     let mapTelemetry = RouteMapTelemetry()
-    let phoneTester = PhoneBeaconTester()
     let recorder = VoiceRecorder()
     let glove = SimulatedGlove()
     let deviceConnection = DeviceConnection()
@@ -92,8 +107,12 @@ import UIKit
         #endif
         super.init()
         controller = PointController(glove: deviceConnection.glove)
+        deviceConnection.glove.onHeadingChange = { [weak self] reading in
+            if let reading { self?.mapTelemetry.receive(reading) }
+            else { self?.mapTelemetry.clearHeading() }
+        }
         controller.$feedback.sink { [weak self] feedback in
-            guard let self, !isDemo, !usePhoneAsGlove else { return }
+            guard let self, !isDemo else { return }
             if pointingAligned != feedback.shouldConfirm { pointingAligned = feedback.shouldConfirm }
             let status: String
             switch feedback.status {
@@ -101,7 +120,7 @@ import UIKit
             case .checking: status = "Hold your pointing direction"
             case .offDirection: status = "Point toward the next beacon"
             case .calibrationRequired: status = "Glove needs a north reference"
-            case .headingUnavailable: status = "Waiting for a fresh glove heading"
+            case .headingUnavailable: status = deviceConnection.glove.message ?? "Waiting for a fresh glove heading"
             case .locationUnavailable: status = feedback.locationIssue?.message ?? "Waiting for GPS"
             case .rerouteRequired: status = "Off route · Check the map before continuing"
             case .disconnected: status = "Glove guidance unavailable · Check Device setup"
@@ -118,7 +137,7 @@ import UIKit
         journey.$liveDataAvailable.sink { [weak self] in self?.liveTransitData = $0 }.store(in: &subscriptions)
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        // Physical camera/top edge is forward, independent of UI rotation or screen-down grip.
+        // Paired magnetic/true readings provide declination only; pointing is glove-owned.
         locationManager.headingOrientation = .portrait
         locationManager.headingFilter = kCLHeadingFilterNone
         locationManager.activityType = .fitness
@@ -133,27 +152,31 @@ import UIKit
         }.store(in: &subscriptions)
         // Words appear as they are spoken; the final transcript replaces them after finishing.
         recorder.$liveTranscript.sink { [weak self] text in
-            guard let self, stage == .recording else { return }
+            guard let self, voicePhase == .listening else { return }
             transcript = text
         }.store(in: &subscriptions)
         recorder.$endpoint.sink { [weak self] endpoint in
-            guard let self, stage == .recording, !isDemo else { return }
+            guard let self, voicePhase == .listening, !isDemo else { return }
             switch endpoint {
             case .listening: break
             case .finished: finishRecording()
             case .noSpeech:
-                recordingLimit?.cancel()
-                recorder.cancel()
-                // Cancelling capture also cancels the endpoint task delivering this event.
-                // Set the retry state directly; fail() deliberately ignores cancelled tasks.
-                message = ServiceError.emptyTranscript.localizedDescription
-                ask(ServiceError.emptyTranscript.localizedDescription, listensForReply: false)
+                endConversation()
+                announce("I’ll pause here. Tap to talk again.")
             }
         }.store(in: &subscriptions)
+        recorder.onInterruption = { [weak self] in
+            guard let self, self.conversationActive, self.voicePhase == .speaking else { return }
+            self.spokenFeedback.stop()
+            self.replyListeningTask?.cancel()
+            self.voicePhase = .listening
+            self.transcript = ""
+            self.beginListeningState()
+        }
         // VoiceOver owns spoken announcements when active, avoiding two voices at once.
         NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.stopSpokenReply() }.store(in: &subscriptions)
+            .sink { [weak self] _ in self?.endConversation() }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: UIAccessibility.announcementDidFinishNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
@@ -164,6 +187,16 @@ import UIKit
                     reply.finished()
                 }
             }.store(in: &subscriptions)
+        NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] notification in
+                guard let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                      reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue else { return }
+                self?.endConversation()
+            }.store(in: &subscriptions)
+        NotificationCenter.default.publisher(for: AVAudioSession.mediaServicesWereResetNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.endConversation() }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
@@ -180,7 +213,6 @@ import UIKit
     }
 
     func requestLocation() {
-        guard stage != .indoorDemo else { return }
         locationManager.requestWhenInUseAuthorization()
         if locationManager.authorizationStatus == .authorizedWhenInUse || locationManager.authorizationStatus == .authorizedAlways {
             locationManager.startUpdatingLocation()
@@ -188,7 +220,7 @@ import UIKit
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        if (manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways), stage != .indoorDemo {
+        if (manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways) {
             manager.startUpdatingLocation()
         } else if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
             currentLocation = nil
@@ -197,17 +229,28 @@ import UIKit
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
-        mapTelemetry.receive(newHeading)
-        phoneTester.receive(newHeading)
+        // Use the difference of one paired reading, never the phone's direction as
+        // the glove's direction. Only refresh the local correction with a fresh fix.
+        let now = Date()
+        if let location = currentLocation,
+           CLLocationCoordinate2DIsValid(location.coordinate),
+           (0...25).contains(location.horizontalAccuracy),
+           (0...5).contains(now.timeIntervalSince(location.timestamp)),
+           (0...5).contains(now.timeIntervalSince(newHeading.timestamp)) {
+            deviceConnection.glove.northCorrection = MagneticNorthCorrection(
+                trueHeading: newHeading.trueHeading, magneticHeading: newHeading.magneticHeading,
+                accuracy: newHeading.headingAccuracy, timestamp: newHeading.timestamp)
+        } else { deviceConnection.glove.northCorrection = nil }
     }
 
     func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool {
-        phoneTester.running
+        deviceConnection.isConnected
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard !isDemo, stage != .indoorDemo, let location = locations.last else { return }
+        guard !isDemo, let location = locations.last else { return }
         currentLocation = location
+        guard stage != .indoorDemo else { return }
         let previouslyOffRoute = controller.navigation.rerouteRequired
         let arrival = controller.updateLocation(location)
         if journeyPlan != nil { journey.updateLocation(location) }
@@ -218,7 +261,6 @@ import UIKit
                 announce(arrival.isDestination ? "You've arrived at \(selectedPlace?.name ?? "your destination")."
                          : "Beacon \(arrival.index + 1) reached. Point toward beacon \(arrival.index + 2).")
             }
-            if usePhoneAsGlove { phoneTester.reachedBeacon(arrival) }
         } else if journeyStarted, !previouslyOffRoute, controller.navigation.rerouteRequired {
             announce("You seem to be off the route. Check the map before continuing.")
         }
@@ -230,43 +272,68 @@ import UIKit
 
     private func startListening(automatically: Bool) {
         guard !demoInFlight, UIApplication.shared.applicationState == .active else { return }
-        if stage == .recording { finishRecording(); return }
-        guard stage != .searching else { return }
+        if voicePhase == .listening { finishRecording(); return }
         work?.cancel()
+        let context = stage == .recording || stage == .searching ? voiceContext : stage
         stopSpokenReply()
+        conversationActive = true
+        voiceContext = context
         transcript = ""
-        work = Task {
+        voicePhase = .starting
+        let generation = voiceGeneration
+        replyStartTask = Task { [weak self] in
+            guard let self else { return }
             do {
                 try await recorder.start()
-                guard !Task.isCancelled, UIApplication.shared.applicationState == .active else { recorder.cancel(); return }
-                stage = .recording
-                // Do not play generated speech into our own recording.
+                guard !Task.isCancelled, voiceGeneration == generation,
+                      UIApplication.shared.applicationState == .active else { return }
+                voicePhase = .listening
+                beginListeningState()
+                recorder.playListeningCue()
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                if !automatically {
-                    UIAccessibility.post(notification: .announcement, argument: "Listening. Say a destination. I'll finish when you pause.")
-                }
-                recordingLimit = Task {
-                    try? await Task.sleep(for: .seconds(60))
-                    guard !Task.isCancelled, stage == .recording else { return }
-                    finishRecording()
-                }
-            } catch { fail(error) }
+            } catch {
+                guard voiceGeneration == generation, !Task.isCancelled else { return }
+                conversationActive = false
+                voicePhase = .idle
+                fail(error)
+            }
+        }
+    }
+
+    private func beginListeningState() {
+        if stage == .home || stage == .clarifying || stage == .recording || stage == .searching { stage = .recording }
+        recordingLimit?.cancel()
+        recordingLimit = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard !Task.isCancelled, let self, self.voicePhase == .listening else { return }
+            if self.transcript.isEmpty { self.endConversation() }
+            else { self.finishRecording() }
+        }
+    }
+
+    func endConversation() {
+        conversationActive = false
+        stopSpokenReply()
+        if stage == .recording || stage == .searching {
+            work?.cancel()
+            stage = followUpPrompt == nil ? .home : .clarifying
         }
     }
 
     private func finishRecording() {
-        guard stage == .recording else { return }
+        guard voicePhase == .listening else { return }
         recordingLimit?.cancel()
-        stage = .searching
+        voicePhase = .thinking
+        if stage != .route && stage != .journeyChoice && stage != .choosing { stage = .searching }
         work = Task {
             do {
                 let recording = try await recorder.finish()
                 guard !Task.isCancelled else { return }
-                // OpenAI gives the final transcript when configured; the live Apple Speech text
-                // is the fallback, so voice still works without a key or when the request fails.
+                // Use the live transcript immediately. Batch transcription is a fallback when
+                // Apple Speech produced no words, avoiding an extra network wait on every turn.
                 var text = recording.transcript
                 let configuration = developmentVoiceConfiguration
-                if let key = configuration.openAIKey {
+                if text.isEmpty, let key = configuration.openAIKey {
                     do { text = try await OpenAITranscriber(model: configuration.transcriptionModel,
                                                            authorization: { "Bearer \(key)" }).transcribe(audio: recording.audio) }
                     catch { if text.isEmpty { throw error } }
@@ -274,12 +341,15 @@ import UIKit
                 guard !Task.isCancelled else { return }
                 guard !text.isEmpty else { throw ServiceError.emptyTranscript }
                 transcript = text
+                speechPlayer.conversationEngine = nil
+                voicePhase = .idle
                 await search(text)
             } catch { fail(error) }
         }
     }
 
     func searchTyped(_ text: String) {
+        conversationActive = false
         work?.cancel()
         recordingLimit?.cancel()
         stopSpokenReply()
@@ -290,6 +360,7 @@ import UIKit
     }
 
     func prepareTypedReply() {
+        conversationActive = false
         work?.cancel()
         recordingLimit?.cancel()
         stopSpokenReply()
@@ -299,6 +370,7 @@ import UIKit
 
     private func search(_ text: String) async {
         guard !Task.isCancelled else { return }
+        if await handleConversationCommand(text) { return }
         if IndoorDemoCommand.matches(text) { enterIndoorDemo(); return }
         let reply = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
         if ["cancel", "never mind", "nevermind", "stop"].contains(reply) { cancel(); return }
@@ -410,6 +482,7 @@ import UIKit
     }
 
     private func ask(_ question: String, listensForReply: Bool = true) {
+        if !listensForReply { conversationActive = false }
         displayedReply = ""
         followUpPrompt = question
         stage = .clarifying
@@ -478,7 +551,7 @@ import UIKit
             route = plan
             stage = .route
             locationManager.startUpdatingHeading()
-        announce(NavigationSpeech.routeReady(for: place))
+        announce(NavigationSpeech.routeReady(for: place, handsFree: conversationActive))
     }
 
     private func resolveOriginCity(at fix: CLLocation) async -> AppleMapsService.CityContext? {
@@ -555,8 +628,8 @@ import UIKit
             guard !Task.isCancelled else { return }
             if plans.count == 1, plans[0].isWalkingOnly, let walk = plans[0].firstWalk {
                 showRoute(walk, to: place)
-                announce(transitRequested ? "I couldn't find a bus or train for that trip, so here's the walk. \(NavigationSpeech.routeReady(for: place))"
-                         : "That's close enough to walk. \(NavigationSpeech.routeReady(for: place))")
+                announce(transitRequested ? "I couldn't find a bus or train for that trip, so here's the walk. \(NavigationSpeech.routeReady(for: place, handsFree: conversationActive))"
+                         : "That's close enough to walk. \(NavigationSpeech.routeReady(for: place, handsFree: conversationActive))")
                 return
             }
             journeyCandidates = plans
@@ -565,7 +638,7 @@ import UIKit
             followUpPrompt = nil
             candidates = []
             stage = .journeyChoice
-            announce("Here's a route by transit. \(plans[0].summary) Tap it to confirm, or pick another.")
+            announce("Here's a route by transit. \(plans[0].summary) Say first, second, or third to choose a route.")
         } catch {
             guard !Task.isCancelled else { return }
             ask("I couldn't plan a transit trip there. Which place would you like to try instead?")
@@ -587,7 +660,7 @@ import UIKit
         route = walk
         stage = .route
         locationManager.startUpdatingHeading()
-        announce("Transit route ready. \(plan.summary) Tap Start when you're ready.")
+        announce("Transit route ready. \(plan.summary) Say start when you’re ready.")
     }
 
     var isWalkingLeg: Bool { if case .walking = journeyPhase { return true } else { return false } }
@@ -651,7 +724,6 @@ import UIKit
     func replanJourney() {
         guard let place = selectedPlace, let location = currentLocation else { return }
         journey.stop()
-        phoneTester.stop()
         journeyPlan = nil
         journeyReplanReason = nil
         journeyStarted = false
@@ -666,17 +738,14 @@ import UIKit
         case .walkingLegStarted(let leg, let toward):
             if case .walk(let walk) = journeyPlan.legs[leg] { route = walk }
             guard leg > 0 else { return }
-            if !awaitingSignal, usePhoneAsGlove { startPhonePointing() }
-            if !awaitingSignal { announce("Now walk to \(toward). Hold the phone screen down to feel the direction.") }
+            if !awaitingSignal { announce("Now walk to \(toward). Point with your glove to feel the direction.") }
         case .reachedStop(let ride):
-            phoneTester.stop(status: "At \(ride.board.name) · Waiting for the \(ride.route.name)")
             announce("You're at \(ride.board.name). Wait for the \(ride.route.name) toward \(ride.headsign). I'll buzz when it arrives.")
         case .vehicleArriving(let ride):
-            if usePhoneAsGlove { phoneTester.vehicleArrived(message: "\(ride.route.name) arriving at \(ride.board.name)") }
             if isWalkingLeg { announce("\(ride.route.name) toward \(ride.headsign) is arriving at \(ride.board.name).") }
             else { announce("Your \(ride.route.name) toward \(ride.headsign) is here. Board now.") }
         case .departedTentatively:
-            announce("If you boarded, tap I'm on board. If not, tap Not on board.")
+            announce("If you boarded, say I’m on board. Otherwise, say not on board.")
         case .boarded(let ride):
             let stops = ride.stopsRidden == 1 ? "one stop" : "\(ride.stopsRidden) stops"
             announce("On the \(ride.route.name). \(stops) to \(ride.alight.name). I'll tell you when to get off.")
@@ -685,16 +754,13 @@ import UIKit
         case .nextStopIsYours(let ride):
             announce("Next stop is \(ride.alight.name). Get ready.")
         case .alightHere(let ride):
-            if usePhoneAsGlove { phoneTester.vehicleArrived(message: "Get off here · \(ride.alight.name)") }
             announce("Get off here at \(ride.alight.name).")
         case .alighted: break
         case .trackingLost(let ride):
-            announce("Live tracking isn't available. Tap I'm off when you reach \(ride.alight.name).")
+            announce("Live tracking isn't available. Say I’m off when you reach \(ride.alight.name).")
         case .awaitingSignal:
-            phoneTester.stop(status: "Waiting for GPS · Head for the exit")
             announce("Head for the exit. Directions resume once GPS returns.")
         case .signalRestored(let leg):
-            if usePhoneAsGlove { startPhonePointing() }
             let toward: String = { if case .walk(let walk) = journeyPlan.legs[leg] { return walk.destinationName } else { return "your destination" } }()
             announce("GPS is back. Walk to \(toward).")
         case .liveDataLost:
@@ -704,9 +770,8 @@ import UIKit
         case .notice(let text):
             announce(text)
         case .needsReplan(let reason):
-            phoneTester.stop(status: reason)
             journeyReplanReason = reason
-            announce("\(reason) Tap Replan to plan again from here.")
+            announce("\(reason) Say replan to plan again from here.")
         case .arrived:
             finishArrival()
             announce("You've arrived at \(journeyPlan.destinationName).")
@@ -717,7 +782,6 @@ import UIKit
         locationManager.allowsBackgroundLocationUpdates = false
         locationManager.stopUpdatingHeading()
         mapTelemetry.clearHeading()
-        phoneTester.stop(status: "You’ve arrived")
     }
 
     func playVoiceDemo() {
@@ -748,12 +812,63 @@ import UIKit
         }
     }
 
+    #if DEBUG
+    /// Physical-device regression for the Send/cancel audio-graph crash. Does not
+    /// call transcription/search services or retain microphone audio/transcripts.
+    func verifyVoiceAudioLifecycle() async {
+        let capture = VoiceRecorder()
+        let player = PhoneSpeechPlayer()
+        player.conversationEngine = capture.audioEngine
+        let report = URL.documentsDirectory.appending(path: "voice-audio-check.txt")
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("voice-check.caf")
+        var lines: [String] = []
+        func record(_ line: String) {
+            lines.append(line)
+            try? lines.joined(separator: "\n").write(to: report, atomically: true, encoding: .utf8)
+        }
+        defer { player.stop(); capture.cancel(); try? FileManager.default.removeItem(at: fixture) }
+        record("START build 8")
+        do {
+            let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 9600)!
+            buffer.frameLength = 9600
+            for i in 0..<9600 { buffer.floatChannelData![0][i] = 0 }
+            do {
+                let file = try AVAudioFile(forWriting: fixture, settings: format.settings)
+                try file.write(from: buffer)
+            }
+            let audio = SpeechAudio(data: try Data(contentsOf: fixture), text: "Audio lifecycle check")
+            for cycle in 1...3 {
+                record("Cycle \(cycle): starting microphone")
+                try await capture.start()
+                record("Cycle \(cycle): microphone started")
+                capture.playListeningCue()
+                try await Task.sleep(for: .milliseconds(150))
+                capture.playListeningCue()
+                try await Task.sleep(for: .milliseconds(150))
+                try player.play(audio, progress: { _ in }, completion: { _ in })
+                player.stop()
+                try player.play(audio, progress: { _ in }, completion: { _ in })
+                try await Task.sleep(for: .milliseconds(500))
+                record("Cycle \(cycle): reply finished, engine running = \(capture.audioEngine.isRunning)")
+                guard capture.audioEngine.isRunning else { throw RecorderError.couldNotRecord }
+                let recording = try await capture.finish()
+                record("Cycle \(cycle): recording finished (\(recording.audio.count) bytes)")
+                guard !recording.audio.isEmpty else { throw RecorderError.couldNotRecord }
+                capture.cancel(); capture.cancel()
+                record("PASS cycle \(cycle): repeated cue, reply stop/replay, finish, repeated cancel")
+            }
+            record("PASS all audio lifecycle checks")
+            message = "Voice audio check passed."
+        } catch { record("FAIL \(error.localizedDescription)"); message = "Voice audio check failed." }
+    }
+    #endif
+
     func preview() { playVoiceDemo() }
 
     #if DEBUG
     func previewTransit() {
         cancel()
-        usePhoneAsGlove = false
         currentLocation = CLLocation(coordinate: TransitReviewFixtures.origin, altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: Date())
         pendingJourneyPlace = PlaceCandidate(id: "review-destination", name: "Nubian Station", address: "Sample journey · Simulated arrivals",
                                             coordinate: TransitReviewFixtures.destination)
@@ -790,8 +905,7 @@ import UIKit
         }
         #endif
         controller.setOutputEnabled(true)
-        controller.useTransport(isDemo || usePhoneAsGlove ? glove : deviceConnection.glove,
-                                activate: isDemo || !usePhoneAsGlove)
+        controller.useTransport(isDemo ? glove : deviceConnection.glove)
         startGloveWatchdog()
         if let journeyPlan {
             do {
@@ -801,9 +915,8 @@ import UIKit
                 locationManager.showsBackgroundLocationIndicator = true
                 locationManager.pausesLocationUpdatesAutomatically = false
                 if let currentLocation { controller.updateLocation(currentLocation); journey.updateLocation(currentLocation) }
-                if usePhoneAsGlove, isWalkingLeg, !awaitingSignal { startPhonePointing() }
                 let first = journeyPlan.rides.first.map { "Walk to \($0.board.name) first." } ?? ""
-                announce("Trip started. \(first) Hold the phone screen down to feel the direction.")
+                announce("Trip started. \(first) Point with your glove to feel the direction.")
             } catch { fail(error) }
             return
         }
@@ -817,22 +930,15 @@ import UIKit
                 locationManager.pausesLocationUpdatesAutomatically = false
             }
             if !isDemo, let currentLocation { controller.updateLocation(currentLocation) }
-            if !isDemo, usePhoneAsGlove { startPhonePointing() }
-            announce(isDemo ? "Demo started. Try the pointing control." : usePhoneAsGlove
-                     ? "Phone pointing test started. Hold the screen down and point the camera end along your finger. Vibration gets stronger toward the beacon."
-                     : "Navigation started. \(deviceConnection.firmwareMessage).")
+            announce(isDemo ? "Demo started. Try the pointing control." : "Navigation started. \(deviceConnection.firmwareMessage).")
         } catch { fail(error) }
-    }
-
-    private func startPhonePointing() {
-        requestLocation()
-        phoneTester.start(session: controller.navigation)
-        if phoneTester.running { locationManager.startUpdatingHeading() }
     }
 
     private func startGloveWatchdog() {
         gloveWatchdog?.cancel()
-        guard !isDemo, !usePhoneAsGlove else { return }
+        guard !isDemo else { return }
+        // Needed for local declination even though pointing comes from the glove.
+        locationManager.startUpdatingHeading()
         gloveWatchdog = Task { [weak self] in
             while !Task.isCancelled {
                 self?.controller.tick()
@@ -848,15 +954,13 @@ import UIKit
         locationManager.allowsBackgroundLocationUpdates = false
         locationManager.stopUpdatingHeading()
         mapTelemetry.clearHeading()
-        phoneTester.stop(status: "Paused · Resume to test pointing")
     }
 
     func resumeJourney() {
         guard journeyStarted, !isDemo, journeyState == .paused else { return }
         controller.navigation.resume()
         locationManager.allowsBackgroundLocationUpdates = true
-        if usePhoneAsGlove { startPhonePointing() }
-        else { startGloveWatchdog(); controller.tick() }
+        startGloveWatchdog(); controller.tick()
     }
 
     func setDemoAlignment(_ aligned: Bool) {
@@ -867,12 +971,12 @@ import UIKit
     }
 
     func cancel() {
+        conversationActive = false
         gloveWatchdog?.cancel()
         gloveWatchdog = nil
         locationManager.allowsBackgroundLocationUpdates = false
         locationManager.stopUpdatingHeading()
         mapTelemetry.clearHeading()
-        phoneTester.stop()
         work?.cancel()
         recordingLimit?.cancel()
         stopSpokenReply()
@@ -904,6 +1008,9 @@ import UIKit
     }
 
     func sceneInactive() {
+        if stage == .indoorDemo, deviceConnection.keepsDemoRunningInBackground { return }
+        endConversation()
+        deviceConnection.glove.northCorrection = nil
         gloveWatchdog?.cancel()
         gloveWatchdog = nil
         controller.setOutputEnabled(false)
@@ -913,32 +1020,24 @@ import UIKit
         else {
             locationManager.stopUpdatingHeading()
             mapTelemetry.clearHeading()
-            phoneTester.stop(status: journeyState == .arrived ? "You’ve arrived" : journeyState == .navigating
-                             ? "Route tracking continues · Unlock Point for vibration" : "Paused · Resume to test pointing")
         }
     }
 
     func sceneActive() {
         controller.setOutputEnabled(true)
-        guard stage == .route, !isDemo else { return }
-        if journeyStarted { startGloveWatchdog() }
-        if journeyPlan != nil {
-            journey.tick() // Reconcile after a suspension: polls restart, a missed stop is noticed.
-            if journeyStarted, isWalkingLeg, !awaitingSignal, journeyState == .navigating, usePhoneAsGlove { startPhonePointing() }
-            else if !journeyStarted { locationManager.startUpdatingHeading() }
-            return
-        }
-        if journeyStarted, journeyState == .navigating, usePhoneAsGlove {
-            startPhonePointing()
-        } else if !journeyStarted {
-            locationManager.startUpdatingHeading()
+        requestLocation()
+        locationManager.startUpdatingHeading()
+        if stage == .route, !isDemo {
+            if journeyStarted { startGloveWatchdog() }
+            if journeyPlan != nil { journey.tick() }
         }
     }
 
     func enterIndoorDemo() {
         // End any walk/transit plan and pending confirmations before switching coordinate systems.
         cancel()
-        locationManager.stopUpdatingLocation()
+        requestLocation()
+        locationManager.startUpdatingHeading()
         stage = .indoorDemo
     }
 
@@ -955,6 +1054,8 @@ import UIKit
     func openDeviceSetup() {
         stopSpokenReply()
         if stage == .recording || stage == .searching { cancel() }
+        requestLocation()
+        locationManager.startUpdatingHeading()
     }
 
     private func fail(_ error: Error) {
@@ -965,39 +1066,129 @@ import UIKit
     }
 
     private func stopSpokenReply() {
+        voiceGeneration = UUID()
+        replyStartTask?.cancel()
+        replyStartTask = nil
         replyListeningTask?.cancel()
         replyListeningTask = nil
+        recordingLimit?.cancel()
         voiceOverReply = nil
         spokenFeedback.stop()
+        recorder.cancel()
+        speechPlayer.conversationEngine = nil
+        voicePhase = .idle
     }
 
     private func listenAfterReply(expectedStage: Stage) {
-        replyListeningTask?.cancel()
-        replyListeningTask = Task { [weak self] in
-            // Allow the speaker's short acoustic tail to settle before switching to input.
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled, let self, self.stage == expectedStage,
-                  UIApplication.shared.applicationState == .active else { return }
-            self.startListening(automatically: true)
-        }
+        guard stage == expectedStage, UIApplication.shared.applicationState == .active else { return }
+        startListening(automatically: true)
     }
 
     private func announce(_ text: String, listensForReply: Bool = false) {
         stopSpokenReply()
+        lastSpokenReply = text
         guard UIApplication.shared.applicationState == .active else { displayedReply = text; return }
         let expectedStage = stage
+        let generation = voiceGeneration
+        let conversational = (conversationActive || listensForReply) && stage != .indoorDemo && !isDemo
         let finished: () -> Void = { [weak self] in
-            guard listensForReply, expectedStage == .clarifying || expectedStage == .choosing else { return }
-            self?.listenAfterReply(expectedStage: expectedStage)
+            guard let self, self.voiceGeneration == generation else { return }
+            self.replyListeningTask?.cancel()
+            if conversational, self.recorder.isRecording {
+                self.voicePhase = .listening
+                self.recorder.assistantFinished()
+                self.beginListeningState()
+            } else { self.voicePhase = .idle }
         }
-        if UIAccessibility.isVoiceOverRunning {
+        if conversational {
+            conversationActive = true
+            voiceContext = expectedStage
+            voicePhase = .starting
+            replyStartTask = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await recorder.start(whileReplyingTo: text)
+                    guard !Task.isCancelled, voiceGeneration == generation else { return }
+                    speechPlayer.conversationEngine = recorder.audioEngine
+                } catch {
+                    guard !Task.isCancelled, voiceGeneration == generation else { return }
+                    conversationActive = false
+                    recorder.cancel()
+                    speechPlayer.conversationEngine = nil
+                }
+                voicePhase = .speaking
+                replyListeningTask = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(45))
+                    guard !Task.isCancelled, let self, self.voiceGeneration == generation,
+                          self.voicePhase == .speaking else { return }
+                    self.spokenFeedback.stop()
+                    self.displayedReply = text
+                    finished()
+                }
+                // In a conversation Point owns its voice, including with VoiceOver enabled,
+                // so it can stop immediately. Don't duplicate it with an accessibility announcement.
+                spokenFeedback.speak(text, onFailed: { [weak self] in
+                    guard let self, self.voiceGeneration == generation else { return }
+                    self.displayedReply = text
+                    finished()
+                }, onFinished: finished)
+            }
+        } else if UIAccessibility.isVoiceOverRunning {
             displayedReply = text
+            voicePhase = .speaking
             voiceOverReply = (text, finished)
             UIAccessibility.post(notification: .announcement, argument: text)
         } else {
-            spokenFeedback.speak(text, onFinished: finished)
+            voicePhase = .speaking
+            spokenFeedback.speak(text, onFailed: finished, onFinished: finished)
         }
     }
+
+    private func handleConversationCommand(_ text: String) async -> Bool {
+        if let command = ConversationCommand.parse(text) {
+            switch command {
+            case .endConversation: endConversation(); return true
+            case .cancelRoute: cancel(); return true
+            case .repeatReply:
+                announce(lastSpokenReply.isEmpty ? "Say a destination, or ask for demo mode." : lastSpokenReply, listensForReply: true)
+                return true
+            case .start where stage == .route && !journeyStarted: startJourney(); return true
+            case .pause where stage == .route && journeyStarted && journeyState == .navigating:
+                pauseJourney(); announce("Route paused. Say resume when you’re ready."); return true
+            case .resume where stage == .route && journeyState == .paused:
+                resumeJourney(); announce("Resuming your route."); return true
+            case .atStop where stage == .route:
+                if case .walking(let leg) = journeyPhase, let plan = journeyPlan,
+                   plan.legs.dropFirst(leg + 1).contains(where: { if case .ride = $0 { return true }; return false }) {
+                    confirmAtStop(); return true
+                }
+            case .boarded where stage == .route:
+                switch journeyPhase {
+                case .waitingAtStop, .vehicleArriving, .riding(_, _, false, _): confirmBoarded(); return true
+                default: break
+                }
+            case .notBoarded where stage == .route:
+                if case .riding(_, _, false, _) = journeyPhase { notOnBoard(); return true }
+            case .alighted where stage == .route:
+                switch journeyPhase { case .riding, .alighting: confirmAlighted(); return true; default: break }
+            case .replan where stage == .route: replanJourney(); return true
+            default: break
+            }
+            announce("That action isn’t available here. Say a destination, or say stop listening.", listensForReply: true)
+            return true
+        }
+        let choice = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        let indices = ["first": 0, "the first one": 0, "one": 0, "second": 1, "the second one": 1, "two": 1, "third": 2, "the third one": 2, "three": 2]
+        if stage == .journeyChoice {
+            let index = indices[choice] ?? (["yes", "that one", "take it"].contains(choice) ? 0 : -1)
+            if journeyCandidates.indices.contains(index) { selectJourney(journeyCandidates[index]); return true }
+        }
+        if stage == .choosing, let index = indices[choice], candidates.indices.contains(index) {
+            await route(to: candidates[index]); return true
+        }
+        return false
+    }
+
 }
 
 enum DemoRoute {

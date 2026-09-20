@@ -15,17 +15,22 @@ implementation, not the production application foundation.
 
 The repository also contains [`BTTest`](BTTest/README.md), an earlier
 ESP32-C6/ESP-IDF BLE prototype. Its GATT protocol is useful reference code, but
-it has not yet been ported to the ESP32-S3 or integrated with the circuit test.
+its service has now been adapted into the separate `S3Firmware` ESP-IDF project.
 Do not treat `BTTest/platformio.ini` as the configuration for the current
 hardware.
+
+## Integrated ESP-IDF prototype
+
+[`S3Firmware`](S3Firmware/README.md) now implements the S3 sensor readers, bounded motor commands and app BLE contract, including ATTITUDE health/calibration messages. It builds with pinned PlatformIO/ESP-IDF dependencies and has host protocol/timing tests. This is a new integration prototype; physical verification is tracked in its README. Mount mapping and heading accuracy remain explicitly unvalidated, so directional feedback stays gated. The Arduino sketch remains the original hardware reference.
 
 ## Repository layout
 
 | Path | Role | Status |
 |---|---|---|
+| `S3Firmware/` | Integrated S3 ESP-IDF BLE/sensor/haptic prototype | Uploaded; BLE and command checks recorded in its README |
 | `CircuitTest/CircuitTest.ino` | ESP32-S3 primary BNO055, redundant MPU6050, and DRV2605L bring-up | Verified Arduino prototype |
 | `CircuitTest/README.md` | Circuit-test operation and troubleshooting | Current |
-| `BTTest/` | ESP32-C6 NimBLE command/status prototype | Legacy prototype; port required |
+| `BTTest/` | ESP32-C6 NimBLE command/status prototype | Legacy protocol reference; S3 port in `S3Firmware` |
 | `BTTest/ARCHITECTURE.md` | BLE architecture and GATT protocol | Protocol reference |
 
 ## Current circuit and pinout
@@ -193,7 +198,9 @@ port names such as `/dev/cu.usbmodem...` or `COM5`.
 - Keep board configuration, library dependencies, and reproducible build
   commands in `platformio.ini`; do not rely on globally installed libraries.
 
-## Recommended next integration sequence
+## Original integration sequence and remaining work
+
+Steps 1–4 now have a first implementation in `S3Firmware`; the hardware README there distinguishes tested behavior from remaining work.
 
 1. Create the ESP32-S3 ESP-IDF PlatformIO project.
 2. Reimplement and reproduce the Arduino hardware test behavior under ESP-IDF.
@@ -212,3 +219,7 @@ but the production firmware does not yet provide a validated attitude pipeline,
 BLE security, GPS, battery measurement, low-power states, OTA updates, or
 persistent calibration storage. Redundant hardware is present, but automatic
 IMU failover is not yet implemented.
+
+## iPhone integration handoff
+
+The app-side [proposed BLE contract](../docs/FIRMWARE_APP_PROTOCOL.md) now includes BNO055 source, calibration and sensor-health fields, plus local magnetic-to-true-north correction. The original Arduino sketch does not implement this BLE contract; `S3Firmware` now does and has been uploaded for bench testing. Keep the S3 firmware implementation and the app contract in sync when porting from the circuit test.
