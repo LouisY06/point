@@ -27,7 +27,7 @@ public enum GloveEvent {
 /// App-side command model, not a finalized BLE wire format or DRV2605 effect number.
 public enum HapticCommand: Equatable {
     case stop
-    /// A finite, low-duty confirmation pulse; firmware must stop it locally after durationMs.
+    /// A finite confirmation pulse; firmware must stop it locally after durationMs.
     case confirm(durationMs: UInt16, intensity: UInt8)
     /// Our bus/train is at the platform (or it is time to get off). A recognisably different,
     /// finite pattern: three short pulses on current S3 firmware, independent of pointing.
@@ -76,25 +76,19 @@ public enum GloveTransportError: Error { case notConnected, unsupported, busy }
     }
 }
 
-/// Prevents motor-command spam. Re-evaluate on sensor events and an active-session watchdog.
+/// Applies outdoor readiness to the same graded pulse pattern used by the indoor demo.
+/// Re-evaluate on sensor events and an active-session watchdog.
 public struct HapticScheduler {
-    private var lastPulse: Date?
-    private var wasConfirming = false
+    private var pulses = GlovePulseFeedback()
 
     public init() {}
 
     public mutating func command(for feedback: DirectionFeedback, now: Date = Date()) -> HapticCommand? {
-        guard feedback.shouldConfirm else {
-            let needsStop = wasConfirming
-            lastPulse = nil
-            wasConfirming = false
-            return needsStop ? .stop : nil
+        guard feedback.shouldConfirm, let error = feedback.angularErrorDegrees else {
+            return pulses.stop()
         }
-        guard lastPulse.map({ now.timeIntervalSince($0) >= 0.9 }) ?? true else { return nil }
-        lastPulse = now
-        wasConfirming = true
-        return .confirm(durationMs: 180, intensity: 160)
+        return pulses.update(error: error, now: now)
     }
 
-    public mutating func reset() { lastPulse = nil; wasConfirming = false }
+    public mutating func reset() { pulses = GlovePulseFeedback() }
 }

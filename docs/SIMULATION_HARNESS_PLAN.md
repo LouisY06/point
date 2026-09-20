@@ -274,7 +274,7 @@ Panels:
 | --- | --- |
 | `voice-to-route-happy` | spoken command → transcript → candidates → selection → route ready → start |
 | `voice-ambiguous-chooser` | multiple candidates, chooser, late selection, no navigation before choice |
-| `straight-leg-alignment` | first confirm only after ~0.35 s stable alignment, pulse spacing ≥0.9 s |
+| `straight-leg-alignment` | first confirm only after 0.2 s stable alignment; eased 180 ms pulses, requests spaced ≥0.2 s |
 | `sweep-to-find-direction` | continuous arm sweep produces exactly one confirm window at the beacon |
 | `wrong-direction-persistent` | pointing 180° off never confirms, whatever the GPS quality |
 | `corner-sequence` | beacon advance retargets feedback; old bearing stops confirming |

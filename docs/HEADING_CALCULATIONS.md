@@ -183,7 +183,7 @@ From the current project tuning (see [PROJECT_PLAN.md](PROJECT_PLAN.md)):
 || Enter alignment | Measured angular error at most 25 degrees |
 || Leave alignment | Measured angular error above 35 degrees |
 || Stable alignment dwell | 200 ms |
-|| Confirmation pulse | 180 ms; intensity value 160 on the app's UInt8 scale |
-|| Minimum interval between pulses | 900 ms |
+|| Confirmation pulse | 180 ms; eased intensity up to 204/255, matching the indoor demo |
+|| Minimum interval between pulse requests | 200 ms; actual sends wait for pulse duration plus 50 ms |
 
 These are prototype defaults, not calibrated hardware specifications.

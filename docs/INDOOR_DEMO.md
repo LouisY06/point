@@ -31,7 +31,7 @@ The targets are local 3D positions from floor raycasts or the relaxed floor esti
 
 The stored offset converts subsequent target bearings into that magnetic frame. Camera tracking resets still invalidate the room coordinates. A real glove reference change pauses guidance and offers restoration against beacon 1, without deleting the placed beacons. Losing the pointing gate silences vibration while position updates continue. The phone must remain with the wearer; there is no independent glove position estimate or correction for phone-to-hand separation.
 
-Finite glove pulses are requested at most 5 Hz, eased with a 10° full-strength zone and silence beyond 35°, capped at 80% request intensity. Actual sends are spaced past the previous pulse's deadline to avoid motor overlap. Outdoor routes use estimated pointing within 25° for 200 ms, stop beyond 35°, and retain a 900 ms pulse cadence. An acknowledgement is not proof of physical motor motion.
+Finite glove pulses are requested at most 5 Hz, eased with a 10° full-strength zone and silence beyond 35°, capped at 80% request intensity. Actual sends are spaced past the previous pulse's deadline to avoid motor overlap. Outdoor routes use the same pulse strength, easing and cadence after estimated pointing stays within 25° for 200 ms. An acknowledgement is not proof of physical motor motion.
 
 Physical glove taps also require a firmware gesture event wired to start listening. This change uses the app's existing hand/microphone tap; it does not infer tap gestures from the echo service.
 

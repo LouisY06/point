@@ -24,7 +24,7 @@ BLE packet timestamps need translation to a phone clock, or bounded latency/age 
 - `stop`: stop confirmation immediately.
 - `vehicleArrived`: in public-transportation mode, our bus/train is at the platform, or it is time to get off. A recognisably different, finite pattern from `confirm` (the S3 firmware plays three 120 ms pulses with 100 ms gaps); the firmware ends it locally after 560 ms. Transit alerts do not require the glove to point forward. It is never sent while pointing feedback is active.
 
-There are no left/right vibration codes in this version. Current demo tuning is 180 ms per pulse, at most once per 900 ms, after roughly 350 ms stable alignment. These values are placeholders for physical trials, not motor-specific calibration. A single ERM motor is enough for this semantic interface; the firmware decides how to drive its actual motor/driver.
+There are no left/right vibration codes in this version. Outdoor and indoor guidance share eased 180 ms pulses, requested at most every 200 ms and capped at intensity 204/255. Outdoor guidance starts after 200 ms of stable alignment. Actual sends wait for the previous pulse duration plus 50 ms. These values are placeholders for physical trials, not motor-specific calibration. A single ERM motor is enough for this semantic interface; the firmware decides how to drive its actual motor/driver.
 
 Firmware must stop a finite pulse locally even if Bluetooth disconnects or iOS suspends the app. Clear queued cues after reconnect and require fresh heading. Navigation remains visible without the glove; it must not claim haptic feedback is working.
 
