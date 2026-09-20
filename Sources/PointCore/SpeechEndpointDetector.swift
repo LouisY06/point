@@ -6,6 +6,7 @@ public enum SpeechEndpoint: Equatable { case listening, finished, noSpeech }
 /// Times use a monotonic clock. The recorder owns the separate hard duration limit.
 public struct SpeechEndpointDetector {
     private let startedAt: TimeInterval
+    private let pauseDuration: TimeInterval
     private var lastWord: TimeInterval?
     private var lastVoice: TimeInterval?
     private var lastSample: TimeInterval?
@@ -14,7 +15,10 @@ public struct SpeechEndpointDetector {
     private var heardSustainedAudio = false
     private var noiseFloor = -65.0
 
-    public init(startedAt: TimeInterval) { self.startedAt = startedAt }
+    public init(startedAt: TimeInterval, pauseDuration: TimeInterval = 3) {
+        self.startedAt = startedAt
+        self.pauseDuration = max(1.2, pauseDuration)
+    }
 
     public mutating func observeTranscript(at time: TimeInterval) {
         lastWord = time
@@ -47,7 +51,7 @@ public struct SpeechEndpointDetector {
         let quietDuration = time - quietSince
         if let lastWord {
             // Slow speech is allowed: both sound and new words restart this 3-second window.
-            if quietDuration >= 3, time - lastWord >= 3 { return .finished }
+            if quietDuration >= pauseDuration, time - lastWord >= pauseDuration { return .finished }
         } else if heardSustainedAudio {
             // Allow extra time for the first recognition result; batch transcription is a fallback.
             if quietDuration >= 4 { return .finished }

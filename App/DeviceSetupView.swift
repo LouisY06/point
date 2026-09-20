@@ -78,7 +78,39 @@ struct DeviceSetupView: View {
                         Button("Test connection again") { connection.testConnection() }
                             .frame(minHeight: 44)
                     }
-                    Section("Glove") {
+                    Section("Hardware sensor calibration") {
+                        Text(connection.calibrationLevels).font(.subheadline.monospacedDigit())
+                        if connection.hardwareCalibrationSupported {
+                            Button(connection.hardwareCalibrationInProgress ? "Calibrating sensors…" : "Restart sensor calibration") {
+                                connection.recalibrateHardware()
+                            }.frame(minHeight: 44).disabled(connection.hardwareCalibrationInProgress)
+                            if let status = connection.hardwareCalibrationStatus { Text(status).foregroundStyle(.secondary) }
+                            Text("Keep the glove still for the gyro. Then move it gently through different orientations, away from magnets, to settle the compass. Your saved finger direction stays unchanged.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        } else {
+                            Text("Update the glove firmware to restart sensor calibration here. Powering the glove off and on also restarts its sensors.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    Section(connection.pointingReady ? "Glove pointing · Saved" : "Glove pointing setup") {
+                        if !connection.pointingReady {
+                            Text("Fasten the sensor firmly to your glove and hold it still for a few seconds.")
+                            Text("Point your straight finger down and capture the pose. Then point it straight up and capture again.")
+                        }
+                        Text(connection.calibrationStatus).foregroundStyle(.secondary)
+                        if connection.capturingPose { ProgressView("Measuring direction…") }
+                        if !connection.pointingReady {
+                            Button(connection.hasFirstPose ? "Capture upward pose" : "Capture downward pose") { connection.capturePose() }
+                                .frame(minHeight: 44)
+                                .disabled(connection.capturingPose || !connection.sensorReady)
+                        }
+                        Button(connection.pointingReady ? "Sensor moved · Set up again" : "Start setup over") { connection.resetCalibration() }
+                            .frame(minHeight: 44).disabled(connection.capturingPose)
+                        Text("During guidance, point forward within 30° of level. Lower your hand to stop vibration.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Section("Glove guidance") {
+                        if let sensor = connection.sensorSummary { Text(sensor).foregroundStyle(.secondary) }
                         Text(connection.firmwareMessage)
                         if connection.canTestMotor {
                             Button("Test glove vibration") { connection.testMotor() }
@@ -99,7 +131,7 @@ struct DeviceSetupView: View {
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                 } footer: {
-                    Text("Glove controls appear when the device reports support. The current Arduino circuit test uses USB only; its Bluetooth integration is still being added.")
+                    Text("Use Point S3 firmware for glove controls. The Arduino circuit test uses USB only. Direction guidance also requires calibrated sensors and verified glove mounting.")
                 }
             }
             .navigationTitle("Device setup")
@@ -109,6 +141,7 @@ struct DeviceSetupView: View {
                 UIAccessibility.post(notification: .announcement,
                                      argument: connection.message ?? connection.title)
             }
+            .onAppear { connection.beginSetup() }
             .onDisappear { connection.setupDismissed() }
         }
         .tint(PointTheme.action)

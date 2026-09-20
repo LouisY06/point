@@ -34,7 +34,7 @@ There is no mode switch. A walk of up to about 10 minutes just walks. Anything l
 
 - guides you with normal beacons to the stop; the last one sits **on the stop to board** and is **green**, the stop to get off is **red**, and the ride between them is a solid line (subway lines in their MBTA colours, buses in slate blue) with no beacons;
 - stops all pointing feedback while you wait and ride;
-- watches live MBTA predictions for **your line, direction and branch**, and plays a distinct **four-pulse buzz** when your vehicle is at the platform, then again when it is time to get off;
+- watches live MBTA predictions for **your line, direction and branch**, and plays a distinct **three-pulse buzz** when your vehicle is at the platform, then again when it is time to get off;
 - boards and alights automatically from vehicle tracking, with **I'm at the stop / I'm on board / Not on board / I'm off** as overrides;
 - handles transfers at rapid-transit stations the same way, and holds walking instructions after you step off until GPS returns outside;
 - says when live data or GPS is lost and when it returns, and offers **Replan** if you seem to be on the wrong train or missed your stop.
@@ -43,11 +43,13 @@ No key is required (20 MBTA requests/min); add `MBTA_API_KEY` to `.env` for the 
 
 ## Device connection
 
-For indoor virtual beacons, tap the hand and say **“Can you go into demo mode?”** (or type it). Place camera beacons around the room, then start the indoor route. This uses local camera coordinates and phone vibration, without an Apple Maps route. Glove orientation calibration and motor integration for indoor targets are still pending. See [indoor demo](docs/INDOOR_DEMO.md).
+For the indoor demo, say **“Can you go into demo mode?”** (or type it). The default is **one beacon**: point the glove at the camera marker while placing it, start the pointing test, and pocket the phone. Stay in the same spot and turn/point; the camera stops and no phone motion is integrated. This removes walking-estimate drift, but glove heading can still drift. Orientation logs include a motor-mute switch for comparison. Touch guard and the Live Activity remain available. The previous four-beacon walking experiment is retained in demo settings by turning off **Single beacon pointing test**. See [indoor demo](docs/INDOOR_DEMO.md).
 
-To test before the glove is ready, tap **Test beacons** on the home screen. Use the camera to place nearby points (0.5–8 m), then hold the phone flat, screen down, with the camera end along your pointing finger. Vibration smoothly strengthens toward the next beacon. Real walking routes also offer **Phone vibration guidance**, using GPS and compass instead. Both need a physical iPhone for vibration. See [phone and nearby-beacon testing](docs/PHONE_BEACON_TEST.md).
+Open **Device setup**, connect **Point S3**, and complete the two-pose pointing setup. Live map arrows and guidance use the glove IMU/magnetometer; directional vibration requires the finger within 30° of level. Lowering your hand silences direction guidance; transit alerts still play. Phone-as-glove controls have been removed. See [glove setup](docs/DEVICE_SETUP.md).
 
-The ESP32-C6 firmware and app now share a Bluetooth connection test. On a physical iPhone, open the device icon at the top right, scan for **BT Test C6**, select it, and wait for **Connection verified**. This checks a real write/notification round trip; the firmware does not yet expose sensors or control vibration. The simulator can preview the setup screen but cannot perform this hardware test.
+The current glove uses **ESP32-S3 + BNO055 primary compass + MPU6050 backup + DRV2605L**. See [the updated hardware README](Firmware/README.md) and [app/firmware integration contract](docs/FIRMWARE_APP_PROTOCOL.md). The original circuit sketch remains USB-only. The new [S3 ESP-IDF firmware](Firmware/S3Firmware/README.md) has been uploaded and passed BLE/sensor/motor-command bench checks; the matching app implements quaternion mounting calibration. Physical pointing, vibration and iPhone-to-glove end-to-end validation remain pending.
+
+The older ESP32-C6 firmware and app share a Bluetooth connection test. On a physical iPhone, open the device icon at the top right, scan for **BT Test C6**, select it, and wait for **Connection verified**. This checks a real write/notification round trip; the firmware does not yet expose sensors or control vibration. The simulator can preview the setup screen but cannot perform this hardware test.
 
 See [device setup and troubleshooting](docs/DEVICE_SETUP.md) and [firmware build instructions](Firmware/BTTest/README.md). No provider API keys are needed for the connection test.
 
@@ -86,8 +88,8 @@ See the [prioritized acceptance checklist](docs/PROJECT_PLAN.md#remaining-work-p
 
 - Implemented: native UI, outline-to-map transition, recording, OpenAI transcription and native Apple Maps clients, destination selection, route parsing, checkpoint/beacon generation, pointing feedback, simulated transport, and core tests.
 - Bluetooth bring-up implemented: ESP32-C6 echo firmware, device discovery/setup, notification subscription, round-trip verification, disconnect and retry. Live iPhone-to-board verification is still pending.
-- Navigation hardware integration pending: sensor/haptic protocol, heading calibration and physical motor tuning. `GloveTransport` is the replacement boundary; echo-link verification does not imply working glove guidance.
-- Active walks now request background GPS so route progress can continue while locked. Custom phone vibration requires Point in the foreground; camera test points clear on inactivity. Locked-screen behavior, audio interruptions and outdoor accuracy still require device testing.
+- Glove integration implemented: negotiated quaternion/motor protocol, two-pose mounting setup, forward-pointing gate and indoor direction referencing during first beacon placement. Physical pointing, motor sensation and navigation accuracy still need worn-glove trials.
+- Active walks now request background GPS so route progress can continue while locked. Pocket demo retains its glove link in the background with an active Live Activity; camera-mode test points clear on backgrounding. Locked-screen behavior, audio interruptions and outdoor accuracy still require device testing.
 - Optional ARKit camera placement supports nearby test beacons; normal Apple Maps navigation remains camera-free. No glasses SDK, streaming, old dashboard or rehab workflow was copied.
 
 ## Team handoff

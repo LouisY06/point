@@ -25,7 +25,6 @@ import UIKit
     @Published var pointingAligned = false
     @Published var demoInFlight = false
     @Published var currentLocation: CLLocation?
-    @Published var usePhoneAsGlove = true
     @Published private(set) var journeyState: JourneyState = .idle
     @Published private(set) var activeBeaconIndex: Int?
     // Public transportation: walk → ride → walk, coordinated above the walking controller. There is
@@ -50,7 +49,6 @@ import UIKit
     @Published private(set) var pendingTransitOffer = false
     private var pendingJourneyPlace: PlaceCandidate?
     let mapTelemetry = RouteMapTelemetry()
-    let phoneTester = PhoneBeaconTester()
     let recorder = VoiceRecorder()
     let glove = SimulatedGlove()
     let deviceConnection = DeviceConnection()
@@ -97,8 +95,12 @@ import UIKit
         #endif
         super.init()
         controller = PointController(glove: deviceConnection.glove)
+        deviceConnection.glove.onHeadingChange = { [weak self] reading in
+            if let reading { self?.mapTelemetry.receive(reading) }
+            else { self?.mapTelemetry.clearHeading() }
+        }
         controller.$feedback.sink { [weak self] feedback in
-            guard let self, !isDemo, !usePhoneAsGlove else { return }
+            guard let self, !isDemo else { return }
             if pointingAligned != feedback.shouldConfirm { pointingAligned = feedback.shouldConfirm }
             let status: String
             switch feedback.status {
@@ -106,7 +108,7 @@ import UIKit
             case .checking: status = "Hold your pointing direction"
             case .offDirection: status = "Point toward the next beacon"
             case .calibrationRequired: status = "Glove needs a north reference"
-            case .headingUnavailable: status = "Waiting for a fresh glove heading"
+            case .headingUnavailable: status = deviceConnection.glove.message ?? "Waiting for a fresh glove heading"
             case .locationUnavailable: status = feedback.locationIssue?.message ?? "Waiting for GPS"
             case .rerouteRequired: status = "Off route · Check the map before continuing"
             case .disconnected: status = "Glove guidance unavailable · Check Device setup"
@@ -123,7 +125,7 @@ import UIKit
         journey.$liveDataAvailable.sink { [weak self] in self?.liveTransitData = $0 }.store(in: &subscriptions)
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        // Physical camera/top edge is forward, independent of UI rotation or screen-down grip.
+        // Paired magnetic/true readings provide declination only; pointing is glove-owned.
         locationManager.headingOrientation = .portrait
         locationManager.headingFilter = kCLHeadingFilterNone
         locationManager.activityType = .fitness
@@ -203,17 +205,28 @@ import UIKit
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
-        mapTelemetry.receive(newHeading)
-        phoneTester.receive(newHeading)
+        // Use the difference of one paired reading, never the phone's direction as
+        // the glove's direction. Only refresh the local correction with a fresh fix.
+        let now = Date()
+        if let location = currentLocation,
+           CLLocationCoordinate2DIsValid(location.coordinate),
+           (0...25).contains(location.horizontalAccuracy),
+           (0...5).contains(now.timeIntervalSince(location.timestamp)),
+           (0...5).contains(now.timeIntervalSince(newHeading.timestamp)) {
+            deviceConnection.glove.northCorrection = MagneticNorthCorrection(
+                trueHeading: newHeading.trueHeading, magneticHeading: newHeading.magneticHeading,
+                accuracy: newHeading.headingAccuracy, timestamp: newHeading.timestamp)
+        } else { deviceConnection.glove.northCorrection = nil }
     }
 
     func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool {
-        phoneTester.running
+        deviceConnection.isConnected
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard !isDemo, stage != .indoorDemo, let location = locations.last else { return }
+        guard !isDemo, let location = locations.last else { return }
         currentLocation = location
+        guard stage != .indoorDemo else { return }
         let previouslyOffRoute = controller.navigation.rerouteRequired
         let arrival = controller.updateLocation(location)
         if journeyPlan != nil { journey.updateLocation(location) }
@@ -224,7 +237,6 @@ import UIKit
                 announce(arrival.isDestination ? "You've arrived at \(selectedPlace?.name ?? "your destination")."
                          : "Beacon \(arrival.index + 1) reached. Point toward beacon \(arrival.index + 2).")
             }
-            if usePhoneAsGlove { phoneTester.reachedBeacon(arrival) }
         } else if journeyStarted, !previouslyOffRoute, controller.navigation.rerouteRequired {
             announce("You seem to be off the route. Check the map before continuing.")
         }
@@ -690,7 +702,6 @@ import UIKit
     func replanJourney() {
         guard let place = selectedPlace, let location = currentLocation else { return }
         journey.stop()
-        phoneTester.stop()
         journeyPlan = nil
         journeyReplanReason = nil
         journeyStarted = false
@@ -705,13 +716,10 @@ import UIKit
         case .walkingLegStarted(let leg, let toward):
             if case .walk(let walk) = journeyPlan.legs[leg] { route = walk }
             guard leg > 0 else { return }
-            if !awaitingSignal, usePhoneAsGlove { startPhonePointing() }
-            if !awaitingSignal { announce("Now walk to \(toward). Hold the phone screen down to feel the direction.") }
+            if !awaitingSignal { announce("Now walk to \(toward). Point with your glove to feel the direction.") }
         case .reachedStop(let ride):
-            phoneTester.stop(status: "At \(ride.board.name) · Waiting for the \(ride.route.name)")
             announce("You're at \(ride.board.name). Wait for the \(ride.route.name) toward \(ride.headsign). I'll buzz when it arrives.")
         case .vehicleArriving(let ride):
-            if usePhoneAsGlove { phoneTester.vehicleArrived(message: "\(ride.route.name) arriving at \(ride.board.name)") }
             if isWalkingLeg { announce("\(ride.route.name) toward \(ride.headsign) is arriving at \(ride.board.name).") }
             else { announce("Your \(ride.route.name) toward \(ride.headsign) is here. Board now.") }
         case .departedTentatively:
@@ -724,16 +732,13 @@ import UIKit
         case .nextStopIsYours(let ride):
             announce("Next stop is \(ride.alight.name). Get ready.")
         case .alightHere(let ride):
-            if usePhoneAsGlove { phoneTester.vehicleArrived(message: "Get off here · \(ride.alight.name)") }
             announce("Get off here at \(ride.alight.name).")
         case .alighted: break
         case .trackingLost(let ride):
             announce("Live tracking isn't available. Tap I'm off when you reach \(ride.alight.name).")
         case .awaitingSignal:
-            phoneTester.stop(status: "Waiting for GPS · Head for the exit")
             announce("Head for the exit. Directions resume once GPS returns.")
         case .signalRestored(let leg):
-            if usePhoneAsGlove { startPhonePointing() }
             let toward: String = { if case .walk(let walk) = journeyPlan.legs[leg] { return walk.destinationName } else { return "your destination" } }()
             announce("GPS is back. Walk to \(toward).")
         case .liveDataLost:
@@ -743,7 +748,6 @@ import UIKit
         case .notice(let text):
             announce(text)
         case .needsReplan(let reason):
-            phoneTester.stop(status: reason)
             journeyReplanReason = reason
             announce("\(reason) Tap Replan to plan again from here.")
         case .arrived:
@@ -756,7 +760,6 @@ import UIKit
         locationManager.allowsBackgroundLocationUpdates = false
         locationManager.stopUpdatingHeading()
         mapTelemetry.clearHeading()
-        phoneTester.stop(status: "You’ve arrived")
     }
 
     func playVoiceDemo() {
@@ -792,7 +795,6 @@ import UIKit
     #if DEBUG
     func previewTransit() {
         cancel()
-        usePhoneAsGlove = false
         currentLocation = CLLocation(coordinate: TransitReviewFixtures.origin, altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: Date())
         pendingJourneyPlace = PlaceCandidate(id: "review-destination", name: "Nubian Station", address: "Sample journey · Simulated arrivals",
                                             coordinate: TransitReviewFixtures.destination)
@@ -829,8 +831,7 @@ import UIKit
         }
         #endif
         controller.setOutputEnabled(true)
-        controller.useTransport(isDemo || usePhoneAsGlove ? glove : deviceConnection.glove,
-                                activate: isDemo || !usePhoneAsGlove)
+        controller.useTransport(isDemo ? glove : deviceConnection.glove)
         startGloveWatchdog()
         if let journeyPlan {
             do {
@@ -840,9 +841,8 @@ import UIKit
                 locationManager.showsBackgroundLocationIndicator = true
                 locationManager.pausesLocationUpdatesAutomatically = false
                 if let currentLocation { controller.updateLocation(currentLocation); journey.updateLocation(currentLocation) }
-                if usePhoneAsGlove, isWalkingLeg, !awaitingSignal { startPhonePointing() }
                 let first = journeyPlan.rides.first.map { "Walk to \($0.board.name) first." } ?? ""
-                announce("Trip started. \(first) Hold the phone screen down to feel the direction.")
+                announce("Trip started. \(first) Point with your glove to feel the direction.")
             } catch { fail(error) }
             return
         }
@@ -856,22 +856,15 @@ import UIKit
                 locationManager.pausesLocationUpdatesAutomatically = false
             }
             if !isDemo, let currentLocation { controller.updateLocation(currentLocation) }
-            if !isDemo, usePhoneAsGlove { startPhonePointing() }
-            announce(isDemo ? "Demo started. Try the pointing control." : usePhoneAsGlove
-                     ? "Phone pointing test started. Hold the screen down and point the camera end along your finger. Vibration gets stronger toward the beacon."
-                     : "Navigation started. \(deviceConnection.firmwareMessage).")
+            announce(isDemo ? "Demo started. Try the pointing control." : "Navigation started. \(deviceConnection.firmwareMessage).")
         } catch { fail(error) }
-    }
-
-    private func startPhonePointing() {
-        requestLocation()
-        phoneTester.start(session: controller.navigation)
-        if phoneTester.running { locationManager.startUpdatingHeading() }
     }
 
     private func startGloveWatchdog() {
         gloveWatchdog?.cancel()
-        guard !isDemo, !usePhoneAsGlove else { return }
+        guard !isDemo else { return }
+        // Needed for local declination even though pointing comes from the glove.
+        locationManager.startUpdatingHeading()
         gloveWatchdog = Task { [weak self] in
             while !Task.isCancelled {
                 self?.controller.tick()
@@ -887,15 +880,13 @@ import UIKit
         locationManager.allowsBackgroundLocationUpdates = false
         locationManager.stopUpdatingHeading()
         mapTelemetry.clearHeading()
-        phoneTester.stop(status: "Paused · Resume to test pointing")
     }
 
     func resumeJourney() {
         guard journeyStarted, !isDemo, journeyState == .paused else { return }
         controller.navigation.resume()
         locationManager.allowsBackgroundLocationUpdates = true
-        if usePhoneAsGlove { startPhonePointing() }
-        else { startGloveWatchdog(); controller.tick() }
+        startGloveWatchdog(); controller.tick()
     }
 
     func setDemoAlignment(_ aligned: Bool) {
@@ -911,7 +902,6 @@ import UIKit
         locationManager.allowsBackgroundLocationUpdates = false
         locationManager.stopUpdatingHeading()
         mapTelemetry.clearHeading()
-        phoneTester.stop()
         work?.cancel()
         recordingLimit?.cancel()
         stopSpokenReply()
@@ -943,6 +933,8 @@ import UIKit
     }
 
     func sceneInactive() {
+        if stage == .indoorDemo, deviceConnection.keepsDemoRunningInBackground { return }
+        deviceConnection.glove.northCorrection = nil
         gloveWatchdog?.cancel()
         gloveWatchdog = nil
         controller.setOutputEnabled(false)
@@ -952,25 +944,18 @@ import UIKit
         else {
             locationManager.stopUpdatingHeading()
             mapTelemetry.clearHeading()
-            phoneTester.stop(status: journeyState == .arrived ? "You’ve arrived" : journeyState == .navigating
-                             ? "Route tracking continues · Unlock Point for vibration" : "Paused · Resume to test pointing")
         }
     }
 
     func sceneActive() {
+        deviceConnection.enteredForeground()
         controller.setOutputEnabled(true)
-        guard stage == .route, !isDemo else { return }
-        if journeyStarted { startGloveWatchdog() }
-        if journeyPlan != nil {
-            journey.tick() // Reconcile after a suspension: polls restart, a missed stop is noticed.
-            if journeyStarted, isWalkingLeg, !awaitingSignal, journeyState == .navigating, usePhoneAsGlove { startPhonePointing() }
-            else if !journeyStarted { locationManager.startUpdatingHeading() }
-            return
-        }
-        if journeyStarted, journeyState == .navigating, usePhoneAsGlove {
-            startPhonePointing()
-        } else if !journeyStarted {
-            locationManager.startUpdatingHeading()
+        guard stage != .indoorDemo else { return }
+        requestLocation()
+        locationManager.startUpdatingHeading()
+        if stage == .route, !isDemo {
+            if journeyStarted { startGloveWatchdog() }
+            if journeyPlan != nil { journey.tick() }
         }
     }
 
@@ -978,6 +963,7 @@ import UIKit
         // End any walk/transit plan and pending confirmations before switching coordinate systems.
         cancel()
         locationManager.stopUpdatingLocation()
+        locationManager.stopUpdatingHeading()
         stage = .indoorDemo
     }
 
@@ -994,6 +980,8 @@ import UIKit
     func openDeviceSetup() {
         stopSpokenReply()
         if stage == .recording || stage == .searching { cancel() }
+        requestLocation()
+        locationManager.startUpdatingHeading()
     }
 
     private func fail(_ error: Error) {

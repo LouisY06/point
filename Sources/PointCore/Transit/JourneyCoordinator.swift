@@ -132,7 +132,7 @@ import Foundation
         }
     }
 
-    /// Test mode cue: at the platform, or predicted within 45 s; once per trip and status.
+    /// Test mode cue: once when predicted within 45 s, then once at the board stop.
     func handleTestArrivals(_ arrivals: [TransitArrival], ride: RideLeg, now: Date) {
         guard cueArrivalsWhileWalking else { return }
         for arrival in arrivals where arrival.patternID == nil || ride.acceptablePatternIDs.contains(arrival.patternID!) {
@@ -141,7 +141,7 @@ import Foundation
             } ?? false
             let imminent = (arrival.secondsAway(now: now) ?? .max) <= 45
             guard atPlatform || imminent else { continue }
-            let key = "\(arrival.tripID)/\(atPlatform ? arrival.vehicle!.status.rawValue : "imminent")"
+            let key = "\(arrival.tripID)/\(ride.board.id)/\(atPlatform ? "arrival" : "imminent")"
             if cued.insert(key).inserted {
                 controller.emit(.vehicleArrived)
                 onEvent?(.vehicleArriving(ride))
@@ -269,7 +269,8 @@ import Foundation
             for arrival in acceptable {
                 guard let vehicle = arrival.vehicle, let platform = vehicle.platformStopID, ride.boardPlatformIDs.contains(platform),
                       vehicle.status == .stoppedAt || vehicle.status == .incomingAt else { continue }
-                let key = "\(arrival.tripID)/\(vehicle.status.rawValue)"
+                // INCOMING_AT → STOPPED_AT is one arrival, not two alerts.
+                let key = "\(arrival.tripID)/\(ride.board.id)/arrival"
                 if cued.insert(key).inserted {
                     controller.emit(.vehicleArrived)
                     onEvent?(.vehicleArriving(ride))

@@ -26,6 +26,48 @@ import Testing
 }
 
 @MainActor struct FirmwareGloveTests {
+    @Test func transitAlertWorksWithoutMountingOrHeadingButDirectionStillRequiresThem() throws {
+        let r = FirmwareRig(); r.ready(flags: 31)
+        #expect(r.glove.pointingCalibration == nil && r.glove.orientation == nil)
+        #expect(throws: GloveTransportError.self) {
+            try r.glove.send(.confirm(durationMs: 180, intensity: 160), now: r.time(0.04))
+        }
+        try r.glove.send(.vehicleArrived, now: r.time(0.04))
+        #expect(Array(r.packets.last!.suffix(4)) == [2, 0, 0, 0])
+    }
+
+    @Test func headingLossWhileWaitingDoesNotTruncateTransitAlert() {
+        let glove = SimulatedGlove()
+        let controller = PointController(glove: glove)
+        glove.connect()
+        controller.receive(.heading(.init(degrees: 0, accuracyDegrees: 2, timestamp: Date(), reference: .trueNorth)))
+        controller.emit(.vehicleArrived)
+        #expect(glove.commands.last == .vehicleArrived)
+        let count = glove.commands.count
+        controller.receive(.headingUnavailable)
+        controller.tick()
+        #expect(glove.commands.count == count)
+        controller.stop()
+        #expect(glove.commands.last == .stop)
+    }
+
+    @Test func hardwareCalibrationRequiresNegotiatedSupportAndValidReply() throws {
+        let legacy = FirmwareRig(); legacy.ready(flags: 31)
+        #expect(!legacy.glove.supportsHardwareCalibration)
+        #expect(throws: GloveTransportError.self) { try legacy.glove.recalibrateHardware(now: legacy.time(0.04)) }
+        let request = try FirmwareProtocol.request(.recalibrateSensors, token: 0x12345678)
+        #expect(Array(request) == [0xA7,1,6,0x78,0x56,0x34,0x12])
+        let header: [UInt8] = [0xA7,1,0x86,0x78,0x56,0x34,0x12]
+        if case .recalibration(let accepted) = try FirmwareProtocol.reply(Data(header + [0]), operation: .recalibrateSensors, token: 0x12345678) {
+            #expect(accepted)
+        } else { Issue.record("Wrong reset reply") }
+        for payload: [UInt8] in [[], [2], [0,0]] {
+            #expect(throws: FirmwareProtocol.PacketError.self) {
+                try FirmwareProtocol.reply(Data(header + payload), operation: .recalibrateSensors, token: 0x12345678)
+            }
+        }
+    }
+
     @Test func legacyEchoDoesNotUnlockMotorControls() throws {
         let r = FirmwareRig()
         r.glove.beginLink(now: r.start)
@@ -59,14 +101,13 @@ import Testing
         r.glove.receive(r.sample(reference: 0, age: 100), now: r.time(0.3))
         #expect(r.glove.lastHeading?.reference == .relative)
         #expect(abs(r.glove.lastHeading!.timestamp.timeIntervalSince(r.start)) < 0.001)
-        let prior = r.glove.lastHeading!.timestamp
         r.glove.tick(now: r.time(0.4))
         let packet = r.sample(age: 400)
         r.glove.receive(packet, now: r.time(0.6)) // 600 ms total age, rejected.
-        #expect(r.glove.lastHeading?.timestamp == prior)
+        #expect(r.glove.lastHeading == nil)
         r.glove.tick(now: r.time(0.7))
         r.glove.receive(packet, now: r.time(0.71)) // Wrong request token, also rejected.
-        #expect(r.glove.lastHeading?.timestamp == prior)
+        #expect(r.glove.lastHeading == nil)
     }
 
     @Test func stalledLinkCannotAccumulateOrReplayMotorHistory() throws {
@@ -153,6 +194,9 @@ import Testing
         point.receive(.heading(.init(degrees: 0, accuracyDegrees: 2, timestamp: now, reference: .trueNorth)), now: now)
         point.receive(.heading(.init(degrees: 0, accuracyDegrees: 2, timestamp: now.addingTimeInterval(0.4), reference: .trueNorth)), now: now.addingTimeInterval(0.4))
         #expect(point.feedback.shouldConfirm)
+        point.receive(.headingUnavailable, now: now.addingTimeInterval(0.41))
+        #expect(!point.feedback.shouldConfirm)
+        #expect(sim.commands.last == .stop)
         point.setOutputEnabled(false)
         #expect(sim.commands.last == .stop)
         point.emit(.vehicleArrived)
@@ -162,5 +206,101 @@ import Testing
         point.setOutputEnabled(true)
         #expect(point.connection == .disconnected)
         #expect(!point.feedback.shouldConfirm)
+    }
+
+    @Test func bno055NegotiatesHealthAndCorrectsMagneticNorth() {
+        let r = FirmwareRig(); r.ready(flags: 15)
+        r.glove.northCorrection = MagneticNorthCorrection(trueHeading: 105, magneticHeading: 100,
+                                                          accuracy: 2, timestamp: r.start)
+        r.glove.tick(now: r.time(0.1))
+        #expect(r.packets.last?[2] == 4)
+        // Magnetic 359°, uncertainty 2°, BNO055, calibration 3/3/3/3, healthy/mapped.
+        r.glove.receive(r.response(payload: [0x3C, 0x8C, 200, 0, 1, 0, 0, 1, 255, 3]), now: r.time(0.11))
+        #expect(r.glove.lastHeading?.degrees == 4)
+        #expect(r.glove.lastHeading?.reference == .trueNorth)
+        #expect(r.glove.lastHeading?.accuracyDegrees == 4)
+        #expect(r.glove.sensorHealth?.source == .bno055)
+    }
+
+    @Test func calibrationLossFaultDisagreementAndFallbackImmediatelyInvalidate() {
+        for (source, calibration, flags): (UInt8, UInt8, UInt8) in [
+            (1, 253, 3), (1, 255, 2), (1, 255, 1), (1, 255, 7), (1, 255, 11), (2, 255, 3)
+        ] {
+            let r = FirmwareRig(); r.ready(flags: 15)
+            var invalidations = 0
+            r.glove.onEvent = { if case .headingUnavailable = $0 { invalidations += 1 } }
+            r.glove.tick(now: r.time(0.1))
+            r.glove.receive(r.response(payload: [0, 0, 200, 0, 2, 0, 0, 1, 255, 3]), now: r.time(0.11))
+            #expect(r.glove.lastHeading != nil)
+            r.glove.tick(now: r.time(0.25))
+            r.glove.receive(r.response(payload: [0, 0, 200, 0, 2, 0, 0, source, calibration, flags]), now: r.time(0.26))
+            #expect(r.glove.lastHeading == nil)
+            #expect(invalidations == 1)
+            #expect(r.glove.connection == .ready) // Motor testing remains available.
+        }
+    }
+
+    @Test func magneticBnoNeedsFreshCorrectionButFirmwareTrueNorthIsNotCorrectedTwice() {
+        let r = FirmwareRig(); r.ready(flags: 15)
+        r.glove.tick(now: r.time(0.1))
+        r.glove.receive(r.response(payload: [0, 0, 200, 0, 1, 0, 0, 1, 255, 3]), now: r.time(0.11))
+        #expect(r.glove.lastHeading == nil)
+        #expect(r.glove.message?.contains("correction") == true)
+        r.glove.northCorrection = MagneticNorthCorrection(trueHeading: 105, magneticHeading: 100,
+                                                          accuracy: 2, timestamp: r.start)
+        r.glove.tick(now: r.time(0.25))
+        r.glove.receive(r.response(payload: [0, 0, 200, 0, 2, 0, 0, 1, 255, 3]), now: r.time(0.26))
+        #expect(r.glove.lastHeading?.degrees == 0)
+        r.glove.disconnect()
+        #expect(r.glove.sensorHealth == nil)
+        #expect(r.glove.northCorrection == nil)
+    }
+
+    @Test func extendedPacketsRequireExactShapeAndValidSensorIdentity() throws {
+        let r = FirmwareRig(); r.ready(flags: 15)
+        r.glove.tick(now: r.time(0.1))
+        for payload: [UInt8] in [
+            [0, 0, 200, 0, 2, 0, 0], // Old heading response cannot satisfy new opcode.
+            [0, 0, 200, 0, 2, 0, 0, 3, 255, 3], // Unknown sensor.
+            [0, 0, 200, 0, 2, 0, 0, 1, 255, 0x13] // Unknown health flags.
+        ] {
+            r.glove.receive(r.response(payload: payload), now: r.time(0.11))
+            #expect(r.glove.sensorHealth == nil)
+            #expect(r.glove.lastHeading == nil)
+        }
+        r.glove.receive(r.response(payload: [0, 0, 200, 0, 1, 0, 0, 1, 0xE4, 3]), now: r.time(0.12))
+        let health = try #require(r.glove.sensorHealth)
+        #expect(health.system == 3 && health.gyro == 2 && health.accelerometer == 1 && health.magnetometer == 0)
+    }
+
+    @Test func headingExpiresWithoutNewPackets() {
+        let r = FirmwareRig(); r.ready(flags: 15)
+        var invalidated = false
+        r.glove.onEvent = { if case .headingUnavailable = $0 { invalidated = true } }
+        r.glove.tick(now: r.time(0.1))
+        r.glove.receive(r.response(payload: [0, 0, 200, 0, 2, 0, 0, 1, 255, 3]), now: r.time(0.11))
+        r.glove.tick(now: r.time(0.61))
+        #expect(r.glove.lastHeading == nil)
+        #expect(invalidated)
+    }
+
+    @Test func magneticCorrectionHandlesWraparoundOrientationAndInvalidSamples() throws {
+        let now = Date()
+        let reading = HeadingReading(degrees: 2, accuracyDegrees: 3, timestamp: now, reference: .magneticNorth)
+        let west = try #require(MagneticNorthCorrection(trueHeading: 355, magneticHeading: 5, accuracy: 2, timestamp: now))
+        #expect(west.degrees == -10)
+        #expect(west.apply(to: reading, now: now)?.degrees == 352)
+        let rotatedPhone = try #require(MagneticNorthCorrection(trueHeading: 95, magneticHeading: 105, accuracy: 2, timestamp: now))
+        #expect(rotatedPhone.apply(to: reading, now: now)?.degrees == 352)
+        let old = try #require(MagneticNorthCorrection(trueHeading: 0, magneticHeading: 5, accuracy: 2,
+                                                      timestamp: now.addingTimeInterval(-6)))
+        #expect(old.apply(to: reading, now: now) == nil)
+        #expect(west.apply(to: reading, now: now.addingTimeInterval(-1)) == nil)
+        for invalid in [-1.0, 360, Double.nan, .infinity] {
+            #expect(MagneticNorthCorrection(trueHeading: invalid, magneticHeading: 0, accuracy: 2, timestamp: now) == nil)
+        }
+        #expect(MagneticNorthCorrection(trueHeading: 0, magneticHeading: 0, accuracy: -1, timestamp: now) == nil)
+        let relative = HeadingReading(degrees: 2, accuracyDegrees: 3, timestamp: now, reference: .relative)
+        #expect(west.apply(to: relative, now: now) == nil)
     }
 }

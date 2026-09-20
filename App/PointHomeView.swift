@@ -77,12 +77,12 @@ private struct PointHomeContent: View {
             if phase != .active { model.sceneInactive() }
             if phase == .background { deviceConnection.enteredBackground() }
         }
-        .onChange(of: showDeviceSetup) { _, shown in if shown { model.pauseJourney() } }
+        .onChange(of: showDeviceSetup) { _, shown in if shown { model.pauseJourney(); model.openDeviceSetup() } }
         .sheet(isPresented: $showTyping) { typingSheet }
         .sheet(isPresented: $showDeviceSetup) { DeviceSetupView(connection: deviceConnection) }
         .fullScreenCover(isPresented: Binding(get: { model.stage == .indoorDemo },
                                              set: { if !$0 { model.leaveIndoorDemo() } })) {
-            CameraBeaconTestView(onInstruction: model.indoorDemoInstruction)
+            CameraBeaconTestView(connection: deviceConnection, onInstruction: model.indoorDemoInstruction)
         }
         .sheet(isPresented: Binding(get: { model.stage == .choosing }, set: { if !$0 && model.stage == .choosing { model.cancel() } })) { destinationSheet }
         .sheet(isPresented: Binding(get: { model.stage == .journeyChoice }, set: { if !$0 && model.stage == .journeyChoice { model.cancel() } })) { journeySheet }
@@ -119,7 +119,6 @@ private struct PointHomeContent: View {
                 Spacer()
                 deviceSetupButton
             }
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .padding(.top, 14)
             .padding(.horizontal, 28)
             .frame(maxWidth: 520)
@@ -206,7 +205,6 @@ private struct PointHomeContent: View {
                     .background(PointTheme.background, in: Capsule())
             }
             .padding(.horizontal, 24).padding(.top, 12)
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             Spacer()
             routeSheet(maxPanelHeight: maxPanelHeight, bottomInset: bottomInset)
         }
@@ -233,7 +231,7 @@ private struct PointHomeContent: View {
                     Spacer(minLength: 12)
                 }
                 if model.journeyStarted, model.journeyPlan != nil { journeyControls }
-                else if model.journeyStarted, !model.isDemo, model.usePhoneAsGlove { Text(model.phoneTester.status).font(.subheadline.weight(.medium)) }
+                else if model.journeyStarted, !model.isDemo { Text(model.gloveStatus).font(.subheadline.weight(.medium)) }
                 else if !model.journeyStarted { startRow }
             }
         } details: {
@@ -241,26 +239,17 @@ private struct PointHomeContent: View {
                     if model.journeyPlan != nil { journeyLegs }
                     Divider()
                     if model.journeyStarted {
-                        if !model.isDemo, model.usePhoneAsGlove, model.journeyPlan == nil || (model.isWalkingLeg && !model.awaitingSignal) {
-                            PhonePointingStatusView(tester: model.phoneTester, beaconIndex: model.activeBeaconIndex,
-                                                    beaconCount: model.route?.beacons.count ?? 0, arrived: model.journeyState == .arrived)
-                            Button { model.phoneTester.testVibration() } label: {
-                                Text("Test vibration").font(.subheadline.weight(.semibold)).frame(minHeight: 44)
-                            }
-                            if model.journeyState != .arrived, model.journeyPlan == nil {
-                                Button(model.journeyState == .paused ? "Resume pointing" : "Pause pointing") {
-                                    if model.journeyState == .paused { model.resumeJourney() }
-                                    else { model.pauseJourney() }
-                                }
-                                .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
-                            }
-                        } else if model.journeyPlan == nil {
                         HStack(spacing: 6) {
                             Image(systemName: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left").accessibilityHidden(true)
                             Text(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : model.gloveStatus)
                         }
                         .font(.subheadline.weight(.medium))
                         .accessibilityElement(children: .combine)
+                        if !model.isDemo, model.journeyState != .arrived, model.journeyPlan == nil {
+                            Button(model.journeyState == .paused ? "Resume guidance" : "Pause guidance") {
+                                if model.journeyState == .paused { model.resumeJourney() }
+                                else { model.pauseJourney() }
+                            }.frame(minHeight: 44)
                         }
                         if model.isDemo {
                             Toggle("Simulate correct pointing", isOn: Binding(get: { model.pointingAligned }, set: { model.setDemoAlignment($0) }))
@@ -269,16 +258,13 @@ private struct PointHomeContent: View {
                         Button { model.cancel() } label: {
                             Text(model.journeyPlan != nil ? "End trip" : "End walk").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
                         }
-                    } else if !model.isDemo {
-                        Toggle("Phone vibration guidance", isOn: $model.usePhoneAsGlove)
-                            .font(.subheadline.weight(.medium))
-                        if model.usePhoneAsGlove {
-                            Text("Point the camera end toward the highlighted beacon, screen down. Full strength within 10°; a gradual fade out to 35°. Two pulses mean beacon reached, then follow the next.")
-                                .font(.caption).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
                     }
-                Text(model.isDemo ? "Sample route · Simulated glove" : model.usePhoneAsGlove ? "Route tracks while locked · Unlock for phone vibration" : deviceConnection.isConnected ? deviceConnection.firmwareMessage : "Glove not connected")
+                    if !model.isDemo {
+                        Button("Set up glove orientation") { showDeviceSetup = true }.frame(minHeight: 44)
+                        Button("Test glove vibration") { deviceConnection.testMotor() }
+                            .frame(minHeight: 44).disabled(!deviceConnection.canTestMotor)
+                    }
+                Text(model.isDemo ? "Sample route · Simulated glove" : deviceConnection.isConnected ? deviceConnection.firmwareMessage : "Glove not connected")
                         .font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
             }

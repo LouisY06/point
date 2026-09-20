@@ -1,8 +1,8 @@
 # Hardware boundary — draft
 
-The hardware team owns the board, sensors, wiring, firmware and motor. The active target is the XIAO ESP32-S3 with MPU6050 and DRV2605L; Kuan's `firmware` branch contains the circuit-test sketch and current pinout. `Firmware/BTTest` is the older ESP32-C6 BLE echo prototype. Point can discover that service, connect, subscribe to replies, and verify a unique echoed message. See [device setup](DEVICE_SETUP.md) for the physical-iPhone test procedure.
+The hardware team owns the board, sensors, wiring, firmware and motor. The active target is the XIAO ESP32-S3 with primary BNO055 (including magnetometer), redundant MPU6050 and DRV2605L. Firmware push `e83f936` is merged; [the hardware README](../Firmware/README.md) and [circuit test](../Firmware/CircuitTest/README.md) contain the current pinout. `Firmware/BTTest` is the older ESP32-C6 BLE echo prototype. Point can discover that service, connect, subscribe to replies, and verify a unique echoed message. See [device setup](DEVICE_SETUP.md) for the physical-iPhone test procedure.
 
-The echo link is separate from the navigation interface below. Its firmware does not yet provide heading, gestures, battery, or motor control; successful connection verification does not imply those capabilities exist. The app now implements a capability-gated [proposed S3 protocol](FIRMWARE_APP_PROTOCOL.md), including the real route transport and motor-test control. The board still needs to implement that contract; no hardware integration is claimed verified.
+The echo link is separate from the navigation interface below. Its firmware does not yet provide heading, gestures, battery, or motor control; successful connection verification does not imply those capabilities exist. The app now implements a capability-gated [proposed S3 protocol](FIRMWARE_APP_PROTOCOL.md), including the real route transport and motor-test control. The new `Firmware/S3Firmware` now implements the contract and has been uploaded. BLE round trips, sensor reads and finite motor command completion passed bench checks; physical sensation, pointing calibration and iPhone end-to-end testing remain pending.
 
 ## Glove → phone
 
@@ -22,7 +22,7 @@ BLE packet timestamps need translation to a phone clock, or bounded latency/age 
 
 - `confirm(durationMs, intensity)`: one finite pulse confirming pointing alignment.
 - `stop`: stop confirmation immediately.
-- `vehicleArrived`: in public-transportation mode, our bus/train is at the platform, or it is time to get off. A recognisably different, finite pattern from `confirm` (the phone stand-in plays four 120 ms pulses); the firmware chooses the motor sequence and must end it locally. It is never sent while pointing feedback is active.
+- `vehicleArrived`: in public-transportation mode, our bus/train is at the platform, or it is time to get off. A recognisably different, finite pattern from `confirm` (the S3 firmware plays three 120 ms pulses with 100 ms gaps); the firmware ends it locally after 560 ms. Transit alerts do not require the glove to point forward. It is never sent while pointing feedback is active.
 
 There are no left/right vibration codes in this version. Current demo tuning is 180 ms per pulse, at most once per 900 ms, after roughly 350 ms stable alignment. These values are placeholders for physical trials, not motor-specific calibration. A single ERM motor is enough for this semantic interface; the firmware decides how to drive its actual motor/driver.
 
@@ -31,3 +31,5 @@ Firmware must stop a finite pulse locally even if Bluetooth disconnects or iOS s
 ## App development without hardware
 
 `SimulatedGlove` implements `GloveTransport`. The command-line demo injects heading changes and prints motor commands. The UI has a labeled sample route and simulated pointing toggle. Real glove mode selects `FirmwareGlove`; a legacy echo-only board stays unavailable for guidance. Connect through Device setup, then turn off Phone vibration guidance before starting a real walk. Custom gesture learning and belt-specific behavior are deferred.
+
+The BNO055 extension adds source, calibration and health to each attitude response. The app accepts calibrated primary compass readings, applies a fresh local magnetic-to-true-north correction when needed, and immediately invalidates guidance on sensor faults or fallback. The MPU6050 is not an absolute-heading substitute. See the proposed protocol for exact fields and remaining firmware work.

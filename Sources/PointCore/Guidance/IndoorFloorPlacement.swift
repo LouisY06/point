@@ -2,6 +2,16 @@ import Foundation
 
 /// Floor selection in an AR world aligned to gravity (+Y up).
 public enum IndoorFloorPlacement {
+    /// Demo-only floor approximation. Intersect a camera ray with a fixed horizontal
+    /// plane; keeping its height fixed prevents beacons following the phone vertically.
+    public static func approximateHit(origin: SIMD3<Float>, direction: SIMD3<Float>, floorHeight: Float) -> SIMD3<Float>? {
+        guard [origin.x, origin.y, origin.z, direction.x, direction.y, direction.z, floorHeight].allSatisfy(\.isFinite),
+              direction.y < -0.05, origin.y > floorHeight else { return nil }
+        let t = (floorHeight - origin.y) / direction.y
+        let hit = origin + direction * t
+        return accepts(hit: hit, camera: origin, floorHeight: floorHeight) ? hit : nil
+    }
+
     public static func floorHeight(classified: [Float], unclassified: [Float], cameraHeight: Float) -> Float? {
         guard cameraHeight.isFinite else { return nil }
         // Classification takes precedence over height guesses. Without classification, require
