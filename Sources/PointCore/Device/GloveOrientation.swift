@@ -40,6 +40,9 @@ public struct FirmwareSensorHealth: Equatable {
 /// Local magnetic declination inferred from the paired headings in ONE CLLocation
 /// sample. The phone may face any direction; its orientation cancels in the difference.
 public struct MagneticNorthCorrection {
+    /// Local declination changes much more slowly than a live pointing direction.
+    /// The cache additionally limits reuse by distance from the capture location.
+    public static let maximumAge: TimeInterval = 30 * 60
     public let degrees: Double
     public let uncertainty: Double
     public let timestamp: Date
@@ -58,7 +61,7 @@ public struct MagneticNorthCorrection {
               reading.degrees.isFinite, (0..<360).contains(reading.degrees),
               reading.accuracyDegrees.isFinite, (0...25).contains(reading.accuracyDegrees),
               (0...0.5).contains(now.timeIntervalSince(reading.timestamp)),
-              (0...5).contains(now.timeIntervalSince(timestamp)) else { return nil }
+              (0...Self.maximumAge).contains(now.timeIntervalSince(timestamp)) else { return nil }
         let normalized = (reading.degrees + degrees + 360).truncatingRemainder(dividingBy: 360)
         return HeadingReading(degrees: normalized, accuracyDegrees: min(180, reading.accuracyDegrees + uncertainty),
                               timestamp: reading.timestamp, reference: .trueNorth)

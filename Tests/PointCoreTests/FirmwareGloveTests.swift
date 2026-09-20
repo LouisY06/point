@@ -222,6 +222,28 @@ import Testing
         #expect(r.glove.sensorHealth?.source == .bno055)
     }
 
+    @Test func cachedNorthGuidesAfterPhoneDropoutAndReconnectButStillRejectsGloveFaults() throws {
+        let r = FirmwareRig(); r.ready(flags: 15)
+        let location = CLLocation(coordinate: .init(latitude: 42.36, longitude: -71.09), altitude: 0,
+                                  horizontalAccuracy: 100, verticalAccuracy: -1, timestamp: r.start)
+        var cache = MagneticNorthCorrectionCache()
+        cache.update(trueHeading: 105, magneticHeading: 100, accuracy: 2,
+                     timestamp: r.start, location: location, now: r.start)
+        // The glove link can restart without discarding the phone's local north reference.
+        r.glove.disconnect()
+        r.ready(flags: 15)
+        let cached = cache.correction(at: location, now: r.time(120))
+        r.glove.northCorrection = try #require(cached)
+        r.glove.tick(now: r.time(120))
+        r.glove.receive(r.response(payload: [0x3C, 0x8C, 200, 0, 1, 0, 0, 1, 255, 3]), now: r.time(120.01))
+        #expect(r.glove.lastHeading?.degrees == 4)
+        #expect(r.glove.lastHeading?.reference == .trueNorth)
+        // A cached correction does not bypass the live sensor health gate.
+        r.glove.tick(now: r.time(120.2))
+        r.glove.receive(r.response(payload: [0x3C, 0x8C, 200, 0, 1, 0, 0, 1, 255, 7]), now: r.time(120.21))
+        #expect(r.glove.lastHeading == nil)
+    }
+
     @Test func calibrationLossFaultDisagreementAndFallbackImmediatelyInvalidate() {
         for (source, calibration, flags): (UInt8, UInt8, UInt8) in [
             (1, 253, 3), (1, 255, 2), (1, 255, 1), (1, 255, 7), (1, 255, 11), (2, 255, 3)
@@ -293,7 +315,7 @@ import Testing
         let rotatedPhone = try #require(MagneticNorthCorrection(trueHeading: 95, magneticHeading: 105, accuracy: 2, timestamp: now))
         #expect(rotatedPhone.apply(to: reading, now: now)?.degrees == 352)
         let old = try #require(MagneticNorthCorrection(trueHeading: 0, magneticHeading: 5, accuracy: 2,
-                                                      timestamp: now.addingTimeInterval(-6)))
+                                                      timestamp: now.addingTimeInterval(-MagneticNorthCorrection.maximumAge - 1)))
         #expect(old.apply(to: reading, now: now) == nil)
         #expect(west.apply(to: reading, now: now.addingTimeInterval(-1)) == nil)
         for invalid in [-1.0, 360, Double.nan, .infinity] {
