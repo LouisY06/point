@@ -70,9 +70,8 @@ import UIKit
         self?.displayedReply = text
     }) { [weak self] in
         guard let configuration = self?.developmentVoiceConfiguration else { return nil }
-        if configuration.deepgramKey != nil { return DeepgramSpeech(configuration: configuration) }
-        if configuration.elevenLabsKey != nil { return ElevenLabsSpeech(configuration: configuration) }
-        return nil
+        guard configuration.deepgramKey != nil else { return nil }
+        return DeepgramSpeech(configuration: configuration)
     }
 
     // Local development only. Production app should inject authenticated backend implementations

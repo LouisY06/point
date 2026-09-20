@@ -53,14 +53,14 @@ See [device setup and troubleshooting](docs/DEVICE_SETUP.md) and [firmware build
 
 ## Live development configuration
 
-Copy `.env.example` to `.env` and fill in `OPENAI_API_KEY` and `ELEVENLABS_API_KEY`. Leave the voice/model defaults to try Caleb — Trusted Guide with Eleven Flash v2.5. `.env` is ignored by Git and never bundled. See [voice setup](docs/VOICE_SETUP.md) for installation and voice selection.
+Copy `.env.example` to `.env` and fill in `OPENAI_API_KEY` and `DEEPGRAM_API_KEY`. Leave the voice defaults to try Flux TTS with `flux-hannah-en`. `.env` is ignored by Git and never bundled. See [voice setup](docs/VOICE_SETUP.md) for installation and voice selection.
 
-Apple Speech shows live words. OpenAI optionally supplies the final transcript; ElevenLabs optionally speaks the app's short replies. Supply Debug-only credentials in either of two ways:
+Apple Speech shows live words. Deepgram Nova-3 supplies the final transcript when configured, with OpenAI as the fallback; Deepgram Flux speaks the app's short replies. Supply Debug-only credentials in either of two ways:
 
 - In your **local, unshared** Xcode run scheme, set the variables from `.env.example`. These only apply to launches from Xcode.
 - For launches from the home screen, copy your local `.env` into the installed app's Documents folder: `xcrun devicectl device copy to --device <id> --domain-type appDataContainer --domain-identifier com.point.navigator --source .env --destination Documents/dev.env`. Repeat after changing keys; a rebuild alone does not copy them.
 
-Spoken replies cover destination choices, route readiness, navigation start, arrival, off-route detection and errors. Tapping the microphone, cancelling, backgrounding or an audio interruption stops pending/playback speech. No generated speech plays during capture. When ElevenLabs is missing or fails, the iPhone voice reads the reply. VoiceOver users receive native accessibility announcements instead of a second simultaneous voice. OpenAI interprets city-only requests, clarifications and corrections. Map data controls city and duration confirmations. Point speaks these short replies in the same talking card; see [conversation cases](docs/POINT_AI_SCENARIOS.md).
+Spoken replies cover destination choices, route readiness, navigation start, arrival, off-route detection and errors. Tapping the microphone, cancelling, backgrounding or an audio interruption stops pending/playback speech. No generated speech plays during capture. When Deepgram is missing or fails, the iPhone voice reads the reply. VoiceOver users receive native accessibility announcements instead of a second simultaneous voice. OpenAI interprets city-only requests, clarifications and corrections. Map data controls city and duration confirmations. Point speaks these short replies in the same talking card; see [conversation cases](docs/POINT_AI_SCENARIOS.md).
 
 The development app records an M4A clip, transcribes it, searches nearby Apple Maps places, asks you to select a match, and requests a walking route. Location permission and an actual or simulated GPS fix are required. The microphone waits for three seconds of observed quiet after recognized speech (four seconds without live words), with 60 seconds as a hard limit; audio is removed locally after reading. Typing uses the same Apple Maps search and works without any API credentials or live-voice setting. Allow location access and wait for a GPS fix; in the simulator, select a simulated location. If the first search asks you to wait for location, retry once a fix arrives.
 
@@ -68,7 +68,7 @@ Provider keys are never committed. Direct credential injection is **Debug-only**
 
 ## Verified so far
 
-Voice integration: offline voice/route checks pass; live ElevenLabs speech with character timestamps, OpenAI transcription and structured navigation-intent requests have been exercised using local development credentials. The signed app installs on the connected iPhone. Real outdoor conversations and destination accuracy still need hands-on testing.
+Voice integration: offline voice/route checks pass; live Deepgram speech, transcription and structured navigation-intent requests have been exercised using local development credentials. The signed app installs on the connected iPhone. Real outdoor conversations and destination accuracy still need hands-on testing.
 
 The Apple Maps migration passes 19 offline tests plus a separate live search-and-directions test. iPhone (unsigned) and simulator builds pass. The simulator was checked end to end with typed “MIT Museum,” explicit address selection and a real Apple walking route, using simulated Cambridge GPS. Physical-phone voice and glove navigation remain unverified.
 
