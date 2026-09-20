@@ -175,7 +175,7 @@ private struct PointHomeContent: View {
     private var wordmark: some View {
         HStack(alignment: .firstTextBaseline, spacing: 1) {
             Text("point").font(.title2.weight(.bold)).tracking(-1)
-            Circle().fill(PointTheme.accent).frame(width: 5, height: 5).offset(y: -2)
+            Circle().fill(PointTheme.logoDot).frame(width: 5, height: 5).offset(y: -2)
         }
         .accessibilityElement(children: .ignore).accessibilityLabel("Point")
     }
