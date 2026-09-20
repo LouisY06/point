@@ -259,7 +259,9 @@ private struct PointHomeContent: View {
                             Toggle("Simulate correct pointing", isOn: Binding(get: { model.pointingAligned }, set: { model.setDemoAlignment($0) }))
                                 .font(.subheadline)
                         }
-                        Button(model.journeyPlan != nil ? "End trip" : "End walk") { model.cancel() }.font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
+                        Button { model.cancel() } label: {
+                            Text(model.journeyPlan != nil ? "End trip" : "End walk").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
+                        }
                     } else if !model.isDemo {
                         Toggle("Phone vibration guidance", isOn: $model.usePhoneAsGlove)
                             .font(.subheadline.weight(.medium))
