@@ -173,6 +173,7 @@ import Testing
     @Test func testModeCuesArrivalsAtTheBoardStopWhileStillWalking() throws {
         let glove = SimulatedGlove(); glove.connect()
         let coordinator = JourneyCoordinator(controller: PointController(glove: glove), transit: FakeTransit(), pollInterval: .seconds(60))
+        coordinator.cueArrivalsWhileWalking = true
         var events: [JourneyCoordinator.Event] = []
         coordinator.onEvent = { events.append($0) }
         let plan = makePlan()
@@ -204,13 +205,19 @@ import Testing
         #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 3)
         #expect(coordinator.phase == .walking(leg: 0))
         #expect(events.contains(.vehicleArriving(plan.rides[1])))
-        // Off by default when test mode is disabled.
+        // Default: no cue while walking, but the countdown still shows.
         let quiet = JourneyCoordinator(controller: PointController(glove: glove), transit: FakeTransit(), pollInterval: .seconds(60))
-        quiet.cueArrivalsWhileWalking = false
+        #expect(!quiet.cueArrivalsWhileWalking)
         try quiet.start(makePlan(), at: nil, now: epoch)
         let before = glove.commands.count
-        quiet.handleArrivals([arrival("trip-C", status: .stoppedAt, platform: "r-kendall-s")], now: epoch)
+        quiet.handleArrivals([arrival("trip-C", status: .stoppedAt, platform: "r-kendall-s", seconds: 90)], now: epoch)
         #expect(glove.commands.count == before)
+        #expect(quiet.countdown?.secondsAway == 90)
+        // At the stop, the same arrival cues.
+        quiet.confirmAtStop(now: epoch)
+        quiet.handleArrivals([arrival("trip-C", status: .stoppedAt, platform: "r-kendall-s")], now: epoch.addingTimeInterval(5))
+        #expect(glove.commands.count == before + 2) // stop (leaving the walk) + vehicleArrived
+        #expect(glove.commands.last == .vehicleArrived)
     }
 
     @Test func wrongTrainAndMissedStopAskForAReplan() throws {

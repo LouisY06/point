@@ -74,10 +74,10 @@ import Foundation
     /// True from alighting until a fresh, accurate fix proves we are back outside. The walking
     /// session runs (so the map is right) but no instructions or pointing should be given.
     @Published public private(set) var awaitingSignal = false
-    /// Test mode: from the moment the trip starts, watch the board stop of every ride in the plan
-    /// and cue `vehicleArrived` whenever a vehicle on that route/direction arrives at it, wherever
-    /// the rider is. Later this narrows to "at the stop and arriving".
-    public var cueArrivalsWhileWalking = true
+    /// Test mode (off by default): watch the board stop of every ride from the moment the trip starts
+    /// and cue `vehicleArrived` wherever the rider is. Normally the cue fires only once the rider is
+    /// at the stop (`waitingAtStop`) and the vehicle is at the platform; the countdown shows regardless.
+    public var cueArrivalsWhileWalking = false
     private var testPolls: [Task<Void, Never>] = []
     public var onEvent: ((Event) -> Void)?
 
@@ -248,10 +248,9 @@ import Foundation
         let acceptable = arrivals.filter { $0.patternID == nil || ride.acceptablePatternIDs.contains($0.patternID!) }
         switch phase {
         case .walking:
-            // Test mode: the countdown for the stop this leg leads to; cues come from the watchers.
-            guard cueArrivalsWhileWalking else { return }
+            // Countdown only; a cue while still walking is test mode.
             countdown = makeCountdown(acceptable, ride: ride, now: now)
-            handleTestArrivals(acceptable, ride: ride, now: now)
+            if cueArrivalsWhileWalking { handleTestArrivals(acceptable, ride: ride, now: now) }
         case .waitingAtStop, .vehicleArriving:
             countdown = makeCountdown(acceptable, ride: ride, now: now)
             if case .vehicleArriving(_, let trip) = phase {
@@ -328,7 +327,8 @@ import Foundation
         awaitingSignal = false
         try controller.start(walk, at: fix)
         onEvent?(.walkingLegStarted(leg: leg, toward: walk.destinationName))
-        if cueArrivalsWhileWalking, let rideLeg = rideIndex(after: leg), let ride = ride(at: rideLeg) {
+        // Departure countdown for the stop this leg leads to, shown while walking (no cue).
+        if let rideLeg = rideIndex(after: leg), let ride = ride(at: rideLeg) {
             countdown = nil
             startPolling(every: pollInterval) { [weak self] in
                 guard let self else { return { _ in } }
@@ -453,7 +453,7 @@ import Foundation
     private func resumePolling() {
         switch phase {
         case .walking(let leg):
-            guard cueArrivalsWhileWalking, let rideLeg = rideIndex(after: leg), let ride = ride(at: rideLeg) else { return }
+            guard let rideLeg = rideIndex(after: leg), let ride = ride(at: rideLeg) else { return }
             startPolling(every: pollInterval) { [weak self] in
                 guard let self else { return { _ in } }
                 let result = try? await transit.arrivals(at: ride.board, route: ride.routeFilter, directionID: ride.directionID)
