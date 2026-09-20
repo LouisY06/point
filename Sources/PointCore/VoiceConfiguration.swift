@@ -6,6 +6,8 @@ public struct VoiceConfiguration {
     public let openAIKey: String?
     public let transcriptionModel: String
     public let intentModel: String
+    /// Reasoning effort for GPT-5 family intent models ("none", "low", …); ignored for older models.
+    public let intentReasoning: String
     public let elevenLabsKey: String?
     public let voiceID: String
     public let speechModel: String
@@ -29,7 +31,10 @@ public struct VoiceConfiguration {
         }
         openAIKey = value("OPENAI_API_KEY")
         transcriptionModel = value("OPENAI_TRANSCRIPTION_MODEL") ?? "gpt-transcribe"
-        intentModel = value("OPENAI_INTENT_MODEL") ?? "gpt-4.1-mini"
+        // GPT-5.5 with reasoning off: frontier judgement at about one second, which beat 4.1-mini on
+        // corrections and prompt injection in the request replay (scratch benchmark, Sept 2026).
+        intentModel = value("OPENAI_INTENT_MODEL") ?? "gpt-5.5"
+        intentReasoning = value("OPENAI_INTENT_REASONING") ?? "none"
         elevenLabsKey = value("ELEVENLABS_API_KEY")
         voiceID = value("ELEVENLABS_VOICE_ID") ?? Self.recommendedVoiceID
         speechModel = value("ELEVENLABS_MODEL_ID") ?? "eleven_flash_v2_5"
