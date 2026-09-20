@@ -1,7 +1,14 @@
-# BT Test
+# BT Test: ESP32-C6 BLE Prototype
 
-Minimal Bluetooth Low Energy connection prototype for the Seeed Studio XIAO
-ESP32-C6 using ESP-IDF's NimBLE host.
+> **Repository status:** This is the earlier Seeed Studio XIAO ESP32-C6 BLE
+> prototype. The active circuit now uses an ESP32-S3 with a primary BNO055,
+> redundant MPU6050, and DRV2605L.
+> The current hardware baseline and PlatformIO handoff are documented in
+> [`../README.md`](../README.md). This project remains useful as protocol and
+> NimBLE lifecycle reference code, but it has not been ported to the S3.
+
+BT Test is a minimal Bluetooth Low Energy connection prototype for the Seeed
+Studio XIAO ESP32-C6 using ESP-IDF's NimBLE host.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the current software architecture,
 GATT protocol, connection lifecycle, and prototype limitations.
@@ -18,12 +25,16 @@ Writing up to 16 bytes to Command changes Status to `ACK:<payload>` and sends
 a notification to subscribed clients. This is intentionally unsecured for
 bring-up; pairing and command authentication belong in the production phase.
 
-## Build and upload
+## Build and upload the C6 prototype
+
+The checked-in `platformio.ini` intentionally targets
+`seeed_xiao_esp32c6` with the ESP-IDF framework. Run these commands from the
+`Firmware/BTTest` directory:
 
 ```sh
-~/.platformio/penv/bin/pio run
-~/.platformio/penv/bin/pio run --target upload
-~/.platformio/penv/bin/pio device monitor
+pio run -e seeed_xiao_esp32c6
+pio run -e seeed_xiao_esp32c6 --target upload
+pio device monitor --baud 115200
 ```
 
 From a phone, use a generic BLE application such as nRF Connect or LightBlue,
@@ -34,3 +45,20 @@ Point now supports this GATT workflow directly. On a physical iPhone, open the
 device setup icon, scan for `BT Test C6`, and select the board. The app enables
 notifications and verifies an echoed test command. See
 [Point device setup](../../docs/DEVICE_SETUP.md) for the complete bench procedure.
+
+## Porting note for the ESP32-S3
+
+Do not only change the board name and assume the combined firmware is done.
+The working circuit test currently uses the Arduino framework and Adafruit
+sensor libraries, while this prototype uses ESP-IDF C and NimBLE. The full
+firmware environment is explicitly **ESP-IDF on the ESP32-S3**, managed through
+PlatformIO. Arduino remains limited to circuit verification and easy debugging.
+
+The next teammate should create the S3 ESP-IDF project, port this NimBLE module,
+and implement BNO055, MPU6050, and DRV2605L access as ESP-IDF components. The
+BNO055 is the primary attitude source and the MPU6050 is the redundant source;
+automatic fault detection and failover still need to be designed. Retain the
+UUIDs and command/status behavior unless the phone application is updated at
+the same time. Rename the advertised device from `BT Test C6` during the S3
+port. BLE callbacks must enqueue work rather than reading either IMU or
+triggering the haptic driver directly.
