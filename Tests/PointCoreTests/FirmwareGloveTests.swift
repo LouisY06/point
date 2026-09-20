@@ -26,6 +26,23 @@ import Testing
 }
 
 @MainActor struct FirmwareGloveTests {
+    @Test func hardwareCalibrationRequiresNegotiatedSupportAndValidReply() throws {
+        let legacy = FirmwareRig(); legacy.ready(flags: 31)
+        #expect(!legacy.glove.supportsHardwareCalibration)
+        #expect(throws: GloveTransportError.self) { try legacy.glove.recalibrateHardware(now: legacy.time(0.04)) }
+        let request = try FirmwareProtocol.request(.recalibrateSensors, token: 0x12345678)
+        #expect(Array(request) == [0xA7,1,6,0x78,0x56,0x34,0x12])
+        let header: [UInt8] = [0xA7,1,0x86,0x78,0x56,0x34,0x12]
+        if case .recalibration(let accepted) = try FirmwareProtocol.reply(Data(header + [0]), operation: .recalibrateSensors, token: 0x12345678) {
+            #expect(accepted)
+        } else { Issue.record("Wrong reset reply") }
+        for payload: [UInt8] in [[], [2], [0,0]] {
+            #expect(throws: FirmwareProtocol.PacketError.self) {
+                try FirmwareProtocol.reply(Data(header + payload), operation: .recalibrateSensors, token: 0x12345678)
+            }
+        }
+    }
+
     @Test func legacyEchoDoesNotUnlockMotorControls() throws {
         let r = FirmwareRig()
         r.glove.beginLink(now: r.start)

@@ -949,6 +949,7 @@ import UIKit
     }
 
     func sceneActive() {
+        deviceConnection.enteredForeground()
         controller.setOutputEnabled(true)
         guard stage != .indoorDemo else { return }
         requestLocation()

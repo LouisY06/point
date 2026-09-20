@@ -33,6 +33,7 @@ identified before upload; this project must not be uploaded to the old C6.
 - Controller 0: GPIO2 SDA / GPIO1 SCL, 100 kHz. BNO055 at 0x28/29 and MPU6050
   at 0x68/69. Driver reads have bounded timeouts.
 - Controller 1: GPIO41 SDA / GPIO42 SCL, 400 kHz. DRV2605L at 0x5A.
+- Built-in **user LED: GPIO21, active-low**, for the XIAO ESP32-S3 specified by this project ([Seeed pinout](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/)). The charge/power indicator is separate. The user LED follows successfully commanded nonzero DRV2605L RTP output, switches off in pulse gaps, and switches off on STOP, completion, disconnect, reset or driver error. It indicates commanded output, not measured actuator motion. `POINT_HAPTIC_LED_GPIO` and `POINT_HAPTIC_LED_ACTIVE_LOW` are compile-time overrides for a different documented board; do not assume these match an S3 DevKit RGB LED.
 - BNO055 reset, normal power, degree units, internal clock, NDOF mode. Read
   fused orientation and calibration/self-test/system status at 50 Hz.
 - MPU6050 ±4 g, ±500°/s, 21 Hz filter, 100 Hz sampling. Startup averages 400
@@ -64,14 +65,14 @@ identified before upload; this project must not be uploaded to the old C6.
   write failures or overcurrent/overtemperature disable subsequent motor output
   until reboot. There is no unsolicited startup vibration.
 
-Serial commands: `h` requests one 180 ms, 160/255 motor pulse; `s` stops it.
+Serial commands: `h` requests one 180 ms, 160/255 motor pulse with the LED; `s` stops both; `c` restarts hardware sensor calibration.
 The serial test is local and independent of BLE, calibration and GPS.
 
 ## App mounting calibration
 
 Legacy Euler output deliberately retains `POINT_MOUNT_VALID=0`, zero heading offset and `POINT_HEADING_ACCURACY_CDEG=18000`. Do not flip these to bypass setup. New clients negotiate HELLO bit 4 and request opcode 5: raw signed WXYZ quaternion, scale 16384, sample age, source, calibration and health in 20 bytes. Euler and quaternion are read contiguously; norm and sensor status gate health. `UNIT_SEL=0` retains the existing Windows Euler-format setting; quaternion consumers use the ENU rotation convention rather than converting Euler angles.
 
-The matching app learns the physical finger vector through two stable glove-only gravity poses (finger down, then up), validates that both imply the same sensor-to-finger axis, and resets that mapping on reconnect, sensor faults or loss of gyro readiness. Compass settling pauses navigation while preserving mounting. Glove mounting setup requires healthy orientation and gyro=3; navigation additionally needs system >0 and magnetometer ≥2; accelerometer calibration is optional, so six-face calibration is not required. The app's uncertainty budget combines measured mounting repeatability with a provisional 5° compass allowance; it is not a measured or certified sensor accuracy. Directional output additionally requires the finger within ±30° of level, fresh sensor data and (outdoors) a fresh true-north correction. Explicit motor tests remain available before calibration.
+The matching app learns the physical finger vector through two stable glove-only gravity poses (finger down, then up), validates that both imply the same sensor-to-finger axis, and stores that mapping per Bluetooth glove. Reconnection restores it even before gyro readiness; temporary sensor faults pause guidance without erasing the mounting map. Compass settling pauses navigation while preserving mounting. Glove mounting setup requires healthy orientation and gyro=3; navigation additionally needs system >0 and magnetometer ≥2; accelerometer calibration is optional, so six-face calibration is not required. The app's uncertainty budget combines measured mounting repeatability with a provisional 5° compass allowance; it is not a measured or certified sensor accuracy. Directional output additionally requires the finger within ±30° of level, fresh sensor data and (outdoors) a fresh true-north correction. Explicit motor tests remain available before calibration.
 
 See [setup steps](../../docs/DEVICE_SETUP.md) and the [wire contract](../../docs/FIRMWARE_APP_PROTOCOL.md). Physical mounting, roll/pitch convention, actual vibration, and navigation behavior still require a worn-glove trial. No successful physical calibration is claimed by a build or packet test.
 
@@ -98,8 +99,7 @@ STOP and invalid time. Both tests run with address/undefined-behavior sanitizers
 
 No bonding/authentication, OTA, GPS-on-board, battery telemetry, persistent sensor
 calibration, automatic I2C reinitialization, validated sensor-disagreement detection,
-automatic IMU failover or low-power mode. The iPhone prototype currently closes
-BLE in the background. Motor cutoff depends on a working MCU and I2C path; a
+automatic IMU failover or low-power mode. The iPhone closes BLE outside an active pocket background test and reconnects its remembered glove on returning to the foreground. Motor cutoff depends on a working MCU and I2C path; a
 severed driver bus cannot guarantee the stop write reaches the actuator. An
 independent hardware enable/watchdog is still needed for a fault-tolerant cutoff.
 
@@ -134,3 +134,11 @@ python -m esptool --chip esp32s3 --port /dev/cu.YOUR_BOARD --baud 230400 write-f
 ## Quaternion extension bench result — 19 September 2026
 
 The matching opcode-5 build was uploaded to the same ESP32-S3 with verified write hashes. Mac BLE passed echo and HELLO `0x1F`; ten paired ATTITUDE/ORIENTATION reads returned healthy BNO055 data with quaternion squared norm about 1.0000 and sample ages 6–26 ms. Calibration remained `0/3/0/0`, so automatic guidance correctly remains blocked pending user calibration. Three 180 ms motor requests were acknowledged; the client sent STOP and disconnected cleanly. This run did not observe actuator motion or a mounted hand. Host protocol/motor tests pass under ASAN/UBSAN. The old `0x0F` bench entry above describes the previous firmware.
+
+## Hardware sensor recalibration (separate from finger setup)
+
+Install the matching app and this firmware together: HELLO now advertises bit 5 and the app accepts capabilities through `0x3F`. In **Device setup → Hardware sensor calibration → Restart sensor calibration**, the app sends STOP, then opcode 6. The firmware immediately acknowledges acceptance and resets BNO055 fusion/offsets plus the backup MPU6050 gyro bias on the sensor task. BLE and motor deadlines keep running; unavailable orientation is reported during reset. Duplicate reset tokens do not repeat the operation. Motor commands are rejected while the reset runs.
+
+Hold the glove completely still during reset and until **Gyro 3/3**. Then move it gently through different orientations away from magnetic objects to allow compass calibration. Calibration is performed by the BNO055; an accepted restart is not a claim that calibration is complete. Live system/gyro/accelerometer/compass levels appear in the app. Accelerometer 3/3 is optional for this demo; full accelerometer calibration, if desired, requires additional stable orientations as described in the Bosch datasheet. The saved finger vector is unchanged. Re-establish the demo's direction reference after this deliberate sensor reset.
+
+`c` over the serial console performs the same sensor restart without deleting the app's saved mounting. A physical BLE check can use `python test/ble_smoke.py --recalibrate`, optionally with `--motor` to observe the motor and LED together. Host tests cover LED polarity, pulse gaps, expiry, stop, driver failure, reset packet bounds and app reset ordering. Physical LED operation and successful sensor settling still need observation on the connected board.

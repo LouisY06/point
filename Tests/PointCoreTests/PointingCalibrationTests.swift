@@ -83,6 +83,10 @@ struct PointingCalibrationTests {
         let original = try calibration(mount: simd_quatd(angle: 0.72, axis: simd_normalize(SIMD3(1, 2, 3))))
         PointingCalibrationStore(defaults: defaults).save(original, for: device)
         let reopened = PointingCalibrationStore(defaults: try #require(UserDefaults(suiteName: suite)))
+        #expect(reopened.onlySavedDeviceID == device)
+        reopened.save(original, for: other)
+        #expect(reopened.onlySavedDeviceID == nil)
+        reopened.remove(for: other)
         let restored = try #require(reopened.load(for: device))
         #expect(simd_length(restored.finger - original.finger) < 0.000001)
         #expect(restored.uncertainty == original.uncertainty)
@@ -313,6 +317,43 @@ struct PointingCalibrationTests {
                 try FirmwareProtocol.reply(Data([0xA7, 1, 0x81, 0x78, 0x56, 0x34, 0x12, flags]), operation: .hello, token: token)
             }
         }
+    }
+
+    @Test func hardwareResetStopsMotorPreservesMountAndRejectsPreResetReadings() throws {
+        let glove = FirmwareGlove()
+        var packets: [Data] = []
+        glove.write = { packets.append($0) }
+        func respond(_ payload: [UInt8], at seconds: Double) {
+            var b = Array(packets.last!.prefix(7)); b[2] |= 0x80
+            glove.receive(Data(b + payload), now: epoch.addingTimeInterval(seconds))
+        }
+        glove.beginLink(now: epoch)
+        respond([63], at: 0.01); respond([0], at: 0.02)
+        glove.calibrate(try calibration())
+        let mount = glove.pointingCalibration?.finger
+        let reference = glove.relativeCalibrationID
+        glove.tick(now: epoch.addingTimeInterval(0.1)) // Orientation request already in flight.
+        try glove.recalibrateHardware(now: epoch.addingTimeInterval(0.11))
+        #expect(glove.supportsHardwareCalibration && glove.hardwareCalibrationInProgress)
+        #expect(glove.pointingCalibration?.finger == mount)
+        #expect(glove.relativeCalibrationID != reference)
+        respond([0,64,0,0,0,0,0,0,0,0,1,0x72,1], at: 0.12)
+        #expect(glove.orientation == nil) // A queued old reading cannot undo the reset.
+        glove.tick(now: epoch.addingTimeInterval(0.13))
+        #expect(packets.last?[2] == 3 && packets.last?[7] == 0)
+        respond([0], at: 0.14)
+        glove.tick(now: epoch.addingTimeInterval(0.15))
+        #expect(packets.last?[2] == 6)
+        respond([0], at: 0.16)
+        #expect(throws: GloveTransportError.self) { try glove.testMotor(now: epoch.addingTimeInterval(0.17)) }
+        glove.tick(now: epoch.addingTimeInterval(0.25))
+        respond([0,64,0,0,0,0,0,0,255,255,1,0,0], at: 0.26)
+        #expect(glove.hardwareCalibrationInProgress && glove.orientation == nil)
+        glove.tick(now: epoch.addingTimeInterval(0.4))
+        respond([0,64,0,0,0,0,0,0,0,0,1,0x30,1], at: 0.41)
+        #expect(!glove.hardwareCalibrationInProgress)
+        #expect(glove.pointingCalibration?.finger == mount)
+        #expect(glove.relativePointing(now: epoch.addingTimeInterval(0.42)) != nil)
     }
 
     @Test func savedMappingRestoresBeforeGyroSettlesAndDoesNotResetOnEverySample() throws {

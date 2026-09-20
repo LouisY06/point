@@ -33,6 +33,11 @@ import Foundation
     private var supportsArrival = false
     private var supportsAttitude = false
     public private(set) var supportsOrientation = false
+    public private(set) var supportsHardwareCalibration = false
+    public private(set) var hardwareCalibrationInProgress = false
+    public private(set) var hardwareCalibrationMessage: String?
+    private var calibrationQueued = false
+    private var calibrationAccepted = false
     private var lastPoll = Date.distantPast
     private var motorBusyUntil = Date.distantPast
     private var automaticMotorUntil = Date.distantPast
@@ -52,7 +57,7 @@ import Foundation
     }
 
     /// Replays negotiated state when a walking controller selects this transport.
-    /// Discovery/physical connection remains an explicit Device setup action.
+    /// DeviceConnection owns discovery and reconnecting the remembered peripheral.
     public func connect() {
         onEvent?(.connection(connection))
         if let capabilities { onEvent?(.capabilities(capabilities)) }
@@ -72,6 +77,9 @@ import Foundation
         onHeadingChange?(nil)
         northCorrection = nil
         lastMotorAcknowledgement = nil
+        supportsHardwareCalibration = false
+        hardwareCalibrationInProgress = false; hardwareCalibrationMessage = nil
+        calibrationQueued = false; calibrationAccepted = false
         supportsArrival = false
         supportsAttitude = false
         supportsOrientation = false
@@ -82,6 +90,23 @@ import Foundation
         connection = .disconnected
         message = nil
         onEvent?(.connection(.disconnected))
+        onChange?()
+    }
+
+    /// Restarts sensor offsets/fusion, preserving the separately saved mounting vector.
+    public func recalibrateHardware(now: Date = Date()) throws {
+        guard connection == .ready else { throw GloveTransportError.notConnected }
+        guard supportsHardwareCalibration else { throw GloveTransportError.unsupported }
+        guard !hardwareCalibrationInProgress else { throw GloveTransportError.busy }
+        hardwareCalibrationInProgress = true; calibrationQueued = true; calibrationAccepted = false
+        hardwareCalibrationMessage = "Restarting sensors. Keep the glove still."
+        orientation = nil; sensorHealth = nil
+        calibrationID = UUID(); relativeCalibrationID = UUID()
+        relativeReference = RelativeOrientationReference()
+        invalidateHeading("Hardware calibration restarting · Guidance paused")
+        // Stop takes precedence, then reset is sent after the stop acknowledgement.
+        if capabilities?.vibration == true { queued = (.stop, now, false, false) }
+        tick(now: now)
         onChange?()
     }
 
@@ -114,6 +139,7 @@ import Foundation
 
     private func enqueue(_ command: HapticCommand, now: Date, requiresPointing: Bool, relativeDemo: Bool = false) throws {
         guard connection == .ready else { throw GloveTransportError.notConnected }
+        guard command == .stop || !hardwareCalibrationInProgress else { throw GloveTransportError.busy }
         guard capabilities?.vibration == true,
               command != .vehicleArrived || supportsArrival else { throw GloveTransportError.unsupported }
         if command != .stop, requiresPointing, (supportsOrientation || relativeDemo), !pointingAvailable(now: now, relativeDemo: relativeDemo) {
@@ -167,6 +193,11 @@ import Foundation
                 return
             }
         }
+        if calibrationQueued {
+            calibrationQueued = false
+            transmit(.recalibrateSensors, now: now)
+            return
+        }
         if capabilities?.heading == true, now.timeIntervalSince(lastPoll) >= 0.1 {
             lastPoll = now
             transmit(supportsOrientation ? .orientation : supportsAttitude ? .attitude : .heading, now: now)
@@ -182,6 +213,7 @@ import Foundation
         switch reply {
         case .capabilities(let value):
             capabilities = value
+            supportsHardwareCalibration = data.last.map { $0 & 32 != 0 } ?? false
             supportsArrival = data.last.map { $0 & 4 != 0 } ?? false
             supportsOrientation = data.last.map { $0 & 16 != 0 } ?? false
             supportsAttitude = data.last.map { $0 & 8 != 0 } ?? false
@@ -195,11 +227,21 @@ import Foundation
             onEvent?(.connection(.ready))
             onEvent?(.capabilities(value))
         case .orientation(let quaternion, let age, let health):
+            // A reading already in flight before the restart must not restore readiness.
+            if hardwareCalibrationInProgress, !calibrationAccepted { onChange?(); return }
             let previouslyNorthReady = sensorHealth?.fusionBlockingReason == nil && sensorHealth != nil
             sensorHealth = health
             guard elapsed + age <= 0.5 else {
                 orientation = nil
                 invalidateHeading("Waiting for a fresh glove orientation"); onChange?(); return
+            }
+            if hardwareCalibrationInProgress, calibrationAccepted {
+                if let reason = health.mountingBlockingReason {
+                    hardwareCalibrationMessage = "Hardware calibration: \(reason)"
+                } else {
+                    hardwareCalibrationInProgress = false
+                    hardwareCalibrationMessage = "Gyro ready. Move the glove gently away from magnets if the compass still needs settling."
+                }
             }
             let sample = GloveOrientationSample(quaternion: quaternion,
                 timestamp: now.addingTimeInterval(-(elapsed + age)), health: health)
@@ -255,6 +297,13 @@ import Foundation
             onHeadingChange?(reading)
             message = reading.reference == .trueNorth ? "Glove heading available" : "Glove needs a north reference for navigation"
             onEvent?(.heading(reading))
+        case .recalibration(let accepted):
+            calibrationAccepted = accepted
+            hardwareCalibrationInProgress = accepted
+            hardwareCalibrationMessage = accepted ? "Sensors restarting. Hold the glove still, then move gently to settle the compass."
+                : "Sensor restart was rejected. Wait a moment and try again."
+            orientation = nil; sensorHealth = nil
+            invalidateHeading(hardwareCalibrationMessage!)
         case .haptic(let accepted):
             guard accepted else { fail("The glove rejected a motor command. Check its firmware."); return }
             lastMotorAcknowledgement = now
@@ -263,6 +312,7 @@ import Foundation
     }
 
     public func pointingSetupBlockingReason(now: Date = Date()) -> String? {
+        if hardwareCalibrationInProgress { return hardwareCalibrationMessage ?? "Hardware sensors are restarting." }
         guard connection == .ready else { return "Connect your glove to begin." }
         guard supportsOrientation else { return "Update glove firmware to enable pointing setup." }
         guard let orientation, (0...0.5).contains(now.timeIntervalSince(orientation.timestamp)) else {
@@ -272,12 +322,12 @@ import Foundation
     }
 
     public func magneticPointing(now: Date = Date()) -> HeadingReading? {
-        guard connection == .ready, let orientation else { return nil }
+        guard connection == .ready, !hardwareCalibrationInProgress, let orientation else { return nil }
         return pointingCalibration?.magneticHeading(orientation, now: now)
     }
 
     public func relativePointing(now: Date = Date()) -> HeadingReading? {
-        guard connection == .ready, let orientation else { return nil }
+        guard connection == .ready, !hardwareCalibrationInProgress, let orientation else { return nil }
         guard let reading = pointingCalibration?.relativeHeading(orientation, now: now) else { return nil }
         return relativeReference.apply(to: reading)
     }
@@ -346,6 +396,8 @@ import Foundation
         relativeReference = RelativeOrientationReference()
         onHeadingChange?(nil)
         northCorrection = nil
+        supportsHardwareCalibration = false; hardwareCalibrationInProgress = false
+        calibrationQueued = false; calibrationAccepted = false
         state = .failed
         connection = .disconnected
         message = text

@@ -29,11 +29,14 @@ int main(void) {
     assert(point_attitude_reply(reply,&c,&a)==20);
     assert(reply[2]==0x85 && reply[7]==0 && reply[8]==64 && reply[9]==0 && reply[10]==224);
     assert(reply[15]==25 && reply[17]==1 && reply[18]==255 && reply[19]==1);
+    uint8_t calibration[] = {0xA7,1,6,0x78,0x56,0x34,0x12};
+    assert(point_decode(calibration, sizeof calibration, &c) && c.op == POINT_RECALIBRATE);
+    assert(point_reply(reply,c.op,c.token) == 7 && reply[2] == 0x86);
     for (unsigned op=0; op<256; op++) {
         uint8_t packet[16] = {0xA7,1,(uint8_t)op};
         for (size_t n=0; n<=16; n++) {
             bool valid = point_decode(packet,n,&c);
-            assert(valid == ((op==1 || op==2 || op==4 || op==5) ? n==7 : op==3 && n==11));
+            assert(valid == ((op==1 || op==2 || op==4 || op==5 || op==6) ? n==7 : op==3 && n==11));
         }
     }
     puts("Protocol tests passed: bounds, invalid opcodes, durations, retries' wire tokens and Swift-compatible attitude vector.");

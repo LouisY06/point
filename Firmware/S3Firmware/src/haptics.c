@@ -1,5 +1,6 @@
 #include "haptics.h"
 #include "motor_pattern.h"
+#include "haptic_led.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
 
@@ -18,6 +19,7 @@ static bool read_reg(uint8_t reg, uint8_t *value) {
 }
 
 void point_haptics_stop(void) {
+    point_haptic_led_set(false);
     pattern.active = false;
     bool stopped = write_reg(0x02, 0); // RTP zero, then standby; attempt both on failure.
     bool standby = write_reg(0x01, 0x40);
@@ -26,6 +28,8 @@ void point_haptics_stop(void) {
 }
 
 esp_err_t point_haptics_init(void) {
+    esp_err_t led = point_haptic_led_init();
+    if (led != ESP_OK) ESP_LOGE("point_motor", "LED unavailable: %s", esp_err_to_name(led));
     i2c_master_bus_config_t bus_cfg = {.i2c_port = 1, .sda_io_num = 41, .scl_io_num = 42,
         .clk_source = I2C_CLK_SRC_DEFAULT, .glitch_ignore_cnt = 7, .flags.enable_internal_pullup = true};
     i2c_master_bus_handle_t bus;
@@ -58,6 +62,7 @@ bool point_haptics_play(const point_command_t *c, int64_t now) {
     if (!write_reg(0x02, 0) || !write_reg(0x01, 5) || !write_reg(0x02, output)) {
         ready = false; point_haptics_stop(); return false;
     }
+    point_haptic_led_set(output > 0);
     ESP_LOGI("point_motor", "Accepted kind=%u duration=%ums strength=%u", pattern.kind,
              (unsigned)((pattern.deadline_us-pattern.started_us)/1000), pattern.intensity);
     return true;
@@ -82,6 +87,6 @@ void point_haptics_tick(int64_t now) {
     if (!pattern.active) return;
     if (requested != output) {
         if (!write_reg(0x02, requested)) { ready = false; point_haptics_stop(); }
-        else output = requested;
+        else { output = requested; point_haptic_led_set(output > 0); }
     }
 }

@@ -148,5 +148,16 @@ public final class PointingCalibrationStore {
         guard let data = defaults.data(forKey: key(deviceID)) else { return nil }
         return try? JSONDecoder().decode(PointingCalibration.self, from: data)
     }
+    /// Older builds saved the mounting map but not the last connection. Migrate only
+    /// when exactly one valid glove is identifiable; never guess among multiple gloves.
+    public var onlySavedDeviceID: UUID? {
+        let prefix = "point.glove-mount.v1."
+        let devices = defaults.dictionaryRepresentation().keys.compactMap { key -> UUID? in
+            guard key.hasPrefix(prefix), let id = UUID(uuidString: String(key.dropFirst(prefix.count))),
+                  load(for: id) != nil else { return nil }
+            return id
+        }
+        return devices.count == 1 ? devices[0] : nil
+    }
     public func remove(for deviceID: UUID) { defaults.removeObject(forKey: key(deviceID)) }
 }

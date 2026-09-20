@@ -5,7 +5,7 @@ static uint16_t u16(const uint8_t *b) { return b[0] | ((uint16_t)b[1] << 8); }
 static void put16(uint8_t *b, uint16_t v) { b[0] = v; b[1] = v >> 8; }
 
 bool point_decode(const uint8_t *b, size_t n, point_command_t *out) {
-    if (!b || !out || n < 7 || b[0] != 0xA7 || b[1] != 1 || b[2] < 1 || b[2] > 5) return false;
+    if (!b || !out || n < 7 || b[0] != 0xA7 || b[1] != 1 || b[2] < 1 || b[2] > POINT_RECALIBRATE) return false;
     if (n != (b[2] == POINT_HAPTIC ? 11 : 7)) return false;
     point_command_t c = { .op = b[2] };
     for (int i = 0; i < 4; i++) c.token |= (uint32_t)b[3 + i] << (8 * i);

@@ -246,3 +246,9 @@ gating and magnetic-north correction, and that backup/fault states pause guidanc
 then test calibrated heading, loss of alignment, stale IMU,
 disconnect mid-pulse, foreground/background, and real outdoor beacon progression.
 Software tests cannot verify physical vibration or sensor mounting.
+
+## Hardware recalibration extension (opcode 6)
+
+HELLO capability bit 5 (`0x20`) advertises hardware recalibration and requires the existing heading, attitude and orientation bits (`0x19`). A fully equipped updated glove replies `0x3F`; legacy `0x1F` remains accepted by the updated app. Older apps that reject unknown HELLO bits need updating before using this firmware.
+
+Request: `A7 01 06 token_u32_le` (7 bytes). Reply: `A7 01 86 token_u32_le result` (8 bytes), where 0 means the reset request was accepted and 1 means rejected/busy. Acceptance does not mean the gyro/compass are calibrated. The application sends STOP first and invalidates its room reference while retaining the saved sensor-to-finger map. Firmware acknowledges promptly, performs reset on the sensor task, invalidates cached readings during reset, and rejects non-STOP motor commands while resetting. Existing live calibration fields report subsequent sensor readiness. Retransmitting the same token repeats its result without restarting the sensors; stale/out-of-order reset requests are rejected. Serial `c` uses the same sensor task request path.

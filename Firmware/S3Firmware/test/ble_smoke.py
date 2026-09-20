@@ -9,7 +9,7 @@ SERVICE = "7f510001-1b15-4f0d-9e82-8a7c4d6e5f01"
 COMMAND = "7f510002-1b15-4f0d-9e82-8a7c4d6e5f01"
 STATUS = "7f510003-1b15-4f0d-9e82-8a7c4d6e5f01"
 
-async def main(motor):
+async def main(motor, recalibrate):
     devices = await BleakScanner.discover(timeout=8, service_uuids=[SERVICE])
     matches = [d for d in devices if d.name == "Point S3"]
     if len(matches) != 1:
@@ -35,10 +35,15 @@ async def main(motor):
             prefix = struct.pack("<BBBI", 0xA7, 1, op | 0x80, token)
             return await exchange(header + payload, prefix)
         hello = await send(1)
-        assert len(hello) == 8 and hello[7] == 31, hello.hex()
+        assert len(hello) == 8 and hello[7] in (31, 63), hello.hex()
         print(f"Echo and negotiation passed; capabilities=0x{hello[7]:02x}", flush=True)
         stop = await send(3, bytes(4))
         assert stop[-1] == 0, stop.hex()
+        if recalibrate:
+            assert hello[7] & 32, "Install calibration-capable firmware first"
+            assert (await send(6))[-1] == 0
+            print("Hardware reset accepted. Keep the glove still for gyro calibration.", flush=True)
+            await asyncio.sleep(4)
         for _ in range(10):
             reply = await send(4)
             assert len(reply) == 17 and reply[14] == 1, reply.hex()
@@ -68,4 +73,6 @@ async def main(motor):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--motor", action="store_true")
-    asyncio.run(main(parser.parse_args().motor))
+    parser.add_argument("--recalibrate", action="store_true")
+    args = parser.parse_args()
+    asyncio.run(main(args.motor, args.recalibrate))

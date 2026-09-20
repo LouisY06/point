@@ -1,5 +1,6 @@
 import Combine
 import CoreBluetooth
+import UIKit
 import PointCore
 
 /// Foreground BLE setup. Legacy echo verification and negotiated navigation support
@@ -31,10 +32,18 @@ import PointCore
     @Published private(set) var pointingReady = false
     @Published private(set) var orientationSupported = false
     @Published private(set) var sensorReady = false
+    @Published private(set) var hardwareCalibrationSupported = false
+    @Published private(set) var hardwareCalibrationInProgress = false
+    @Published private(set) var hardwareCalibrationStatus: String?
     let glove = FirmwareGlove()
     var keepsDemoRunningInBackground = false
     var onDemoReading: (() -> Void)?
     private let mountingStore = PointingCalibrationStore()
+    private let connectionMemory = GloveConnectionMemory()
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectDelay = 2.0
+    private var automaticAttempt = false
+    private var choosingDevice = false
     private var firstPose: PointingCalibration.Pose?
     private var observations: [GloveOrientationSample] = []
     private var captureTask: Task<Void, Never>?
@@ -53,6 +62,9 @@ import PointCore
 
     override init() {
         super.init()
+        if connectionMemory.device == nil, let id = mountingStore.onlySavedDeviceID {
+            connectionMemory.rememberVerified(id: id, name: "Point glove")
+        }
         glove.write = { [weak self] data in
             guard let self, self.isConnected, let peripheral = self.peripheral,
                   let command = self.commandCharacteristic else { throw GloveTransportError.notConnected }
@@ -60,10 +72,17 @@ import PointCore
         }
         glove.onChange = { [weak self] in
             guard let self else { return }
+            if self.phase == .connected, self.glove.state == .failed {
+                self.fail(self.glove.message ?? "Glove connection interrupted. Reconnecting…")
+                return
+            }
+            self.hardwareCalibrationSupported = self.glove.supportsHardwareCalibration
+            self.hardwareCalibrationInProgress = self.glove.hardwareCalibrationInProgress
+            self.hardwareCalibrationStatus = self.glove.hardwareCalibrationMessage
             self.updateCalibration()
             let value = self.glove.message ?? "Glove firmware support pending"
             if self.firmwareMessage != value { self.firmwareMessage = value }
-            let ready = self.glove.connection == .ready && self.glove.capabilities?.vibration == true
+            let ready = self.glove.connection == .ready && self.glove.capabilities?.vibration == true && !self.glove.hardwareCalibrationInProgress
             if self.canTestMotor != ready { self.canTestMotor = ready }
             let indoorReady = ready && self.glove.magneticPointing() != nil
             if self.canGuideIndoors != indoorReady { self.canGuideIndoors = indoorReady }
@@ -158,6 +177,13 @@ import PointCore
         }
     }
 
+    func recalibrateHardware() {
+        cancelCapture()
+        firstPose = nil; hasFirstPose = false
+        do { try glove.recalibrateHardware() }
+        catch { hardwareCalibrationStatus = "Could not restart the sensors. Check the glove connection and firmware." }
+    }
+
     func resetCalibration() {
         cancelCapture()
         firstPose = nil; hasFirstPose = false
@@ -199,7 +225,7 @@ import PointCore
     }
 
     /// Creates the central manager at launch so the Bluetooth prompt appears with the other
-    /// onboarding permissions. Nothing is scanned until the user asks.
+    /// onboarding permissions. Reconnect only to the last verified glove.
     func prepare() {
         #if !targetEnvironment(simulator)
         guard central == nil else { return }
@@ -208,8 +234,46 @@ import PointCore
         #endif
     }
 
+    func enteredForeground() {
+        if central == nil { prepare() }
+        reconnectKnownGlove()
+    }
+
+    private func reconnectKnownGlove() {
+        guard UIApplication.shared.applicationState == .active, !choosingDevice,
+              !isWorking, !hasLink, let known = connectionMemory.automaticDevice,
+              let central, central.state == .poweredOn else { return }
+        guard !retiring.contains(known.id) else { scheduleReconnect(); return }
+        reconnectTask?.cancel(); reconnectTask = nil
+        automaticAttempt = true
+        if let candidate = central.retrievePeripherals(withIdentifiers: [known.id]).first {
+            beginConnection(candidate, name: known.name)
+        } else {
+            // CoreBluetooth may have purged its cache. Discover the exact saved UUID only.
+            devices = []; peripherals = [:]
+            wantsScan = true
+            message = "Looking for your saved glove…"
+            beginScan()
+        }
+    }
+
+    private func scheduleReconnect() {
+        guard UIApplication.shared.applicationState == .active, !choosingDevice,
+              connectionMemory.automaticDevice != nil, central?.state == .poweredOn else { return }
+        reconnectTask?.cancel()
+        let delay = reconnectDelay
+        reconnectDelay = min(30, reconnectDelay * 2)
+        reconnectTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard !Task.isCancelled else { return }
+            self?.reconnectKnownGlove()
+        }
+    }
+
     func scan() {
         guard canScan else { return }
+        reconnectTask?.cancel(); reconnectTask = nil
+        choosingDevice = true; automaticAttempt = false
         devices = []
         peripherals = [:]
         message = nil
@@ -239,6 +303,11 @@ import PointCore
         after(seconds: 12) { connection in
             connection.central?.stopScan()
             connection.phase = .idle
+            if connection.automaticAttempt {
+                connection.message = "Waiting for your saved glove. Power it on nearby."
+                connection.scheduleReconnect()
+                return
+            }
             if connection.devices.isEmpty {
                 connection.message = "No device found. Power on your Point device with Bluetooth firmware, keep it nearby, and disconnect it from other Bluetooth apps before scanning again. The serial-only circuit test will not appear."
             }
@@ -248,11 +317,20 @@ import PointCore
     func connect(to device: Device) {
         guard [.idle, .scanning].contains(phase), let central, central.state == .poweredOn,
               let candidate = peripherals[device.id], !retiring.contains(device.id) else { return }
+        choosingDevice = false; automaticAttempt = false
+        reconnectTask?.cancel(); reconnectTask = nil
+        // A manual choice supersedes the previous automatic target, even if it fails.
+        connectionMemory.pauseAutomaticConnection()
+        beginConnection(candidate, name: device.name)
+    }
+
+    private func beginConnection(_ candidate: CBPeripheral, name: String) {
+        guard let central, central.state == .poweredOn else { return }
         timeout?.cancel()
         central.stopScan()
         wantsScan = false
         message = nil
-        deviceName = device.name
+        deviceName = name
         peripheral = candidate
         candidate.delegate = self
         phase = .connecting
@@ -279,6 +357,9 @@ import PointCore
     }
 
     func disconnect() {
+        connectionMemory.pauseAutomaticConnection()
+        choosingDevice = false; automaticAttempt = false
+        reconnectTask?.cancel(); reconnectTask = nil
         resetLink()
         phase = .idle
         message = nil
@@ -288,11 +369,17 @@ import PointCore
         setupOpen = false
         cancelCapture()
         firstPose = nil; hasFirstPose = false
-        // Keep an established link, but never scan or connect invisibly behind the sheet.
-        if isWorking { disconnect() }
+        // An explicitly chosen or remembered connection may finish after the sheet closes.
+        if choosingDevice {
+            choosingDevice = false
+            if phase == .scanning || phase == .starting { resetLink(); phase = .idle }
+            reconnectKnownGlove()
+        }
     }
 
     func enteredBackground() {
+        reconnectTask?.cancel(); reconnectTask = nil
+        choosingDevice = false
         if keepsDemoRunningInBackground, isConnected {
             cancelCapture()
             central?.stopScan()
@@ -305,7 +392,7 @@ import PointCore
         resetLink()
         if wasActive {
             phase = .idle
-            message = "Connection closed while Point was in the background. Scan to reconnect."
+            message = "Glove disconnected in the background. It will reconnect when Point opens."
         }
     }
 
@@ -350,6 +437,7 @@ import PointCore
         resetLink()
         message = text
         phase = .failed
+        scheduleReconnect()
     }
 
     private func finishProbeIfReady() {
@@ -359,6 +447,11 @@ import PointCore
         probe = nil
         verifiedAt = Date()
         phase = .connected
+        if let peripheral {
+            connectionMemory.rememberVerified(id: peripheral.identifier, name: deviceName ?? "Point glove")
+        }
+        automaticAttempt = false; reconnectDelay = 2
+        reconnectTask?.cancel(); reconnectTask = nil
         glove.beginLink()
         firmwareLoop = Task { [weak self] in
             while !Task.isCancelled {
@@ -375,20 +468,23 @@ extension DeviceConnection: @preconcurrency CBCentralManagerDelegate {
         switch central.state {
         case .poweredOn:
             if wantsScan { beginScan() }
-            else if phase == .unavailable { phase = .idle; message = nil }
+            else {
+                if phase == .unavailable { phase = .idle; message = nil }
+                reconnectKnownGlove()
+            }
         case .unknown, .resetting:
             retiring.removeAll()
             if peripheral != nil || phase == .scanning {
                 resetLink()
                 phase = .unavailable
-                message = "Bluetooth is restarting. Scan again in a moment."
+                message = "Bluetooth is restarting. Your saved glove will reconnect when available."
             }
         case .poweredOff, .unauthorized, .unsupported:
             resetLink()
             retiring.removeAll()
             phase = .unavailable
             switch central.state {
-            case .poweredOff: message = "Turn on Bluetooth in Settings, then scan again."
+            case .poweredOff: message = "Turn on Bluetooth to reconnect your saved glove."
             case .unauthorized: message = "Allow Point to use Bluetooth in Settings to find your device."
             default: message = "Bluetooth Low Energy is not available on this device. Use a supported iPhone."
             }
@@ -402,6 +498,11 @@ extension DeviceConnection: @preconcurrency CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         guard phase == .scanning, !retiring.contains(peripheral.identifier) else { return }
+        if automaticAttempt {
+            guard peripheral.identifier == connectionMemory.automaticDevice?.id else { return }
+            beginConnection(peripheral, name: connectionMemory.automaticDevice?.name ?? "Point glove")
+            return
+        }
         let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name ?? "Point device"
         peripherals[peripheral.identifier] = peripheral
         let device = Device(id: peripheral.identifier, name: name, signal: RSSI.intValue == 127 ? nil : RSSI.intValue)
@@ -430,7 +531,7 @@ extension DeviceConnection: @preconcurrency CBCentralManagerDelegate {
         retiring.remove(peripheral.identifier)
         guard self.peripheral === peripheral else { return }
         self.peripheral = nil
-        fail("The device disconnected. Keep it powered on and nearby, then scan to reconnect.")
+        fail("Glove disconnected. Reconnecting when it is nearby…")
     }
 }
 

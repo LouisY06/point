@@ -3,7 +3,7 @@ import Foundation
 /// Proposed S3 protocol v1. The Arduino circuit sketch and legacy C6 echo service
 /// do NOT implement this contract. See docs/FIRMWARE_APP_PROTOCOL.md.
 public enum FirmwareProtocol {
-    public enum Operation: UInt8 { case hello = 1, heading = 2, haptic = 3, attitude = 4, orientation = 5 }
+    public enum Operation: UInt8 { case hello = 1, heading = 2, haptic = 3, attitude = 4, orientation = 5, recalibrateSensors = 6 }
     public enum PacketError: Error { case malformed, unsupportedCommand }
     public enum Reply {
         case capabilities(GloveCapabilities)
@@ -11,6 +11,7 @@ public enum FirmwareProtocol {
                      health: FirmwareSensorHealth?)
         case orientation(GloveQuaternion, age: TimeInterval, health: FirmwareSensorHealth)
         case haptic(accepted: Bool)
+        case recalibration(accepted: Bool)
     }
 
     public static func request(_ operation: Operation, token: UInt32, command: HapticCommand? = nil) throws -> Data {
@@ -39,10 +40,11 @@ public enum FirmwareProtocol {
         func u16(_ i: Int) -> UInt16 { UInt16(b[i]) | UInt16(b[i + 1]) << 8 }
         switch operation {
         case .hello:
-            guard b.count == 8, b[7] & ~UInt8(31) == 0,
+            guard b.count == 8, b[7] & ~UInt8(63) == 0,
                   b[7] & 4 == 0 || b[7] & 2 != 0,
                   b[7] & 8 == 0 || b[7] & 1 != 0,
-                  b[7] & 16 == 0 || b[7] & 9 == 9 else { throw PacketError.malformed }
+                  b[7] & 16 == 0 || b[7] & 9 == 9,
+                  b[7] & 32 == 0 || b[7] & 25 == 25 else { throw PacketError.malformed }
             // v1 intentionally has no gesture/battery messages. Bit 2 advertises the
             // bounded vehicle-arrival cue, consumed separately by the transport.
             return .capabilities(GloveCapabilities(heading: b[7] & 1 != 0, gestures: false, vibration: b[7] & 2 != 0))
@@ -68,9 +70,9 @@ public enum FirmwareProtocol {
             }
             return .orientation(quaternion, age: Double(u16(15)) / 1000,
                                 health: FirmwareSensorHealth(source: source, calibration: b[18], flags: b[19]))
-        case .haptic:
+        case .haptic, .recalibrateSensors:
             guard b.count == 8, b[7] <= 1 else { throw PacketError.malformed }
-            return .haptic(accepted: b[7] == 0)
+            return operation == .haptic ? .haptic(accepted: b[7] == 0) : .recalibration(accepted: b[7] == 0)
         }
     }
 }

@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum { POINT_HELLO = 1, POINT_HEADING = 2, POINT_HAPTIC = 3, POINT_ATTITUDE = 4, POINT_ORIENTATION = 5 };
+enum { POINT_HELLO = 1, POINT_HEADING = 2, POINT_HAPTIC = 3, POINT_ATTITUDE = 4, POINT_ORIENTATION = 5, POINT_RECALIBRATE = 6 };
 typedef struct {
     uint8_t op, kind, intensity;
     uint16_t duration_ms;

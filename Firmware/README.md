@@ -223,3 +223,7 @@ IMU failover is not yet implemented.
 ## iPhone integration handoff
 
 The app-side [proposed BLE contract](../docs/FIRMWARE_APP_PROTOCOL.md) now includes BNO055 source, calibration and sensor-health fields, plus local magnetic-to-true-north correction. The original Arduino sketch does not implement this BLE contract; `S3Firmware` now does and has been uploaded for bench testing. Keep the S3 firmware implementation and the app contract in sync when porting from the circuit test.
+
+### Built-in LED and hardware calibration
+
+The integrated XIAO ESP32-S3 build uses its user LED on **GPIO21, active-low** to follow haptic output. It is off between pulses and on stop/disconnect; the power/charging light is separate. The app's **Restart sensor calibration** control (or serial `c`) restarts the BNO055 and backup gyro calibration without deleting the saved finger-axis map. See [S3 firmware](S3Firmware/README.md#hardware-sensor-recalibration-separate-from-finger-setup) for the matching firmware, LED wiring and live calibration workflow.

@@ -43,3 +43,13 @@ Readiness follows [Bosch AN007 §3](https://www.bosch-sensortec.com/media/boschs
 ### Saved setup and live gyro readiness
 
 A saved finger-axis mapping is restored when the same Bluetooth glove negotiates orientation support, even before its gyro settles. The setup section then shows **Glove pointing · Saved** and hides the down/up capture steps. Temporary gyro readiness is reported separately; it pauses directional guidance without deleting or withholding the mounting map. Once gyro readings settle, guidance can resume using that same map. Repeat the poses only after moving the sensor on the glove.
+
+### Restart the hardware sensors
+
+**Hardware sensor calibration → Restart sensor calibration** is separate from **Sensor moved · Set up again**. It stops motor output, restarts BNO055 fusion/calibration and remeasures the backup gyro bias. Keep the glove still until its live gyro level reaches 3/3, then move gently away from magnets to settle the compass. The saved finger direction is preserved. A hardware reset changes the room direction reference, so restore it or place the demo beacon again. The control requires the firmware's opcode-6 capability; older firmware shows an update instruction. Serial `c` is an alternative. The XIAO user LED now follows motor pulses.
+
+### Remembered Bluetooth glove
+
+After a verified connection, Point saves that peripheral's UUID and reconnects on launch, foreground return, Bluetooth becoming available, or an unexpected foreground disconnect. It retrieves that exact device, with a service scan restricted to the saved UUID if the OS cache is empty. Retry delays increase from 2 seconds to a 30-second cap. It never chooses another glove just because its name matches.
+
+Existing installs with exactly one valid saved finger mapping migrate that glove into connection memory. Multiple saved gloves require one explicit choice. **Disconnect** pauses automatic reconnection, including across launches, until the user selects a glove again. Outside the active pocket background session, reconnection waits for the foreground. Reconnecting does not fabricate a restored room reference; that still needs the known beacon.

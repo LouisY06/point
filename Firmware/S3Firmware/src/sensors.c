@@ -22,6 +22,7 @@ static i2c_master_dev_handle_t bno, mpu;
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static point_attitude_t current = { .accuracy_cdeg = 18000, .source = 1, .age_ms = 65535 };
 static int64_t sampled_us;
+static bool calibration_requested, calibration_busy;
 static float bias[3], roll, pitch, yaw;
 static int64_t previous_mpu;
 static uint32_t bno_errors, mpu_errors, missed_ticks;
@@ -71,6 +72,8 @@ static bool init_bno(void) {
 }
 
 static bool init_mpu(void) {
+    for (int i = 0; i < 3; i++) bias[i] = 0;
+    roll = pitch = yaw = 0; previous_mpu = 0;
     if (!wr(mpu, 0x6B, 0x80)) return false;
     vTaskDelay(pdMS_TO_TICKS(100));
     // PLL clock, 1 kHz / 10 sample rate, 21 Hz LPF, +/-500 dps, +/-4 g.
@@ -124,8 +127,7 @@ static void sample_bno(int64_t now) {
         next.health = (plausible ? 1 : 0) | (POINT_MOUNT_VALID ? 2 : 0);
     }
     portENTER_CRITICAL(&lock);
-    current = next;
-    sampled_us = good ? now : 0;
+    if (!calibration_busy) { current = next; sampled_us = good ? now : 0; }
     portEXIT_CRITICAL(&lock);
 }
 
@@ -149,6 +151,21 @@ static void sensor_task(void *unused) {
     TickType_t wake = xTaskGetTickCount();
     unsigned iteration = 0;
     for (;;) {
+        portENTER_CRITICAL(&lock);
+        bool recalibrate = calibration_requested;
+        calibration_requested = false;
+        portEXIT_CRITICAL(&lock);
+        if (recalibrate) {
+            ESP_LOGI(TAG, "Hardware calibration restarting; keep glove still; mounting map is app-owned");
+            bool bno_ok = bno && init_bno();
+            esp_task_wdt_reset();
+            bool mpu_ok = !mpu || init_mpu();
+            portENTER_CRITICAL(&lock);
+            calibration_busy = false;
+            portEXIT_CRITICAL(&lock);
+            ESP_LOGI(TAG, "Sensor reset complete BNO=%d MPU=%d; keep still for gyro, then move gently for compass", bno_ok, mpu_ok);
+            wake = xTaskGetTickCount();
+        }
         int64_t now = esp_timer_get_time();
         if (mpu) sample_mpu(now);
         if (bno && iteration++ % 2 == 0) sample_bno(now);
@@ -194,3 +211,24 @@ point_attitude_t point_sensors_snapshot(void) {
     return result;
 }
 bool point_sensors_present(void) { return bno || mpu; }
+
+bool point_sensors_can_calibrate(void) { return bno != NULL; }
+bool point_sensors_calibrating(void) {
+    portENTER_CRITICAL(&lock);
+    bool busy = calibration_busy;
+    portEXIT_CRITICAL(&lock);
+    return busy;
+}
+bool point_sensors_request_calibration(void) {
+    portENTER_CRITICAL(&lock);
+    bool accepted = bno && !calibration_busy;
+    if (accepted) {
+        calibration_requested = calibration_busy = true;
+        // Reply immediately with unavailable data while reset runs; preserve valid packet shape.
+        current = (point_attitude_t){.quaternion={16384,0,0,0}, .source=1,
+            .accuracy_cdeg=18000, .age_ms=65535};
+        sampled_us = 0;
+    }
+    portEXIT_CRITICAL(&lock);
+    return accepted;
+}
