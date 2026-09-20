@@ -47,6 +47,8 @@ public struct MagneticNorthCorrection {
     public let uncertainty: Double
     public let timestamp: Date
 
+    /// `accuracy` is the correction's uncertainty, not the phone's headingAccuracy.
+    /// Use MagneticNorthCorrectionCache to establish this from phone samples.
     public init?(trueHeading: Double, magneticHeading: Double, accuracy: Double, timestamp: Date) {
         guard trueHeading.isFinite, magneticHeading.isFinite, accuracy.isFinite,
               (0..<360).contains(trueHeading), (0..<360).contains(magneticHeading),

@@ -227,8 +227,10 @@ import Testing
         let location = CLLocation(coordinate: .init(latitude: 42.36, longitude: -71.09), altitude: 0,
                                   horizontalAccuracy: 100, verticalAccuracy: -1, timestamp: r.start)
         var cache = MagneticNorthCorrectionCache()
-        cache.update(trueHeading: 105, magneticHeading: 100, accuracy: 2,
-                     timestamp: r.start, location: location, now: r.start)
+        for seconds in [0.0, 0.2, 0.4] {
+            cache.update(trueHeading: 105, magneticHeading: 100, accuracy: 2,
+                         timestamp: r.time(seconds), location: location, now: r.time(seconds))
+        }
         // The glove link can restart without discarding the phone's local north reference.
         r.glove.disconnect()
         r.ready(flags: 15)

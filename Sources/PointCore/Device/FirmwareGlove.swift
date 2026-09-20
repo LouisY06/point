@@ -268,8 +268,12 @@ import Foundation
             guard let magnetic = pointingCalibration.magneticHeading(sample, now: now) else {
                 invalidateHeading("Raise your hand and point forward · Keep your finger within 30° of level"); onChange?(); return
             }
-            guard let reading = northCorrection?.apply(to: magnetic, now: now), reading.accuracyDegrees <= 25 else {
-                invalidateHeading("Waiting for an accurate true-north correction"); onChange?(); return
+            guard let reading = northCorrection?.apply(to: magnetic, now: now) else {
+                invalidateHeading("Outdoor guidance is waiting for the phone’s true-north correction"); onChange?(); return
+            }
+            guard reading.accuracyDegrees <= 25 else {
+                invalidateHeading("Outdoor direction uncertainty is too high (\(Int(reading.accuracyDegrees.rounded()))°) · Guidance paused")
+                onChange?(); return
             }
             lastHeading = reading
             message = "Glove pointing ready"

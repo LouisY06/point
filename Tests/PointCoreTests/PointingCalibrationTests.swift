@@ -231,6 +231,35 @@ struct PointingCalibrationTests {
 }
 
 @MainActor struct QuaternionTransportTests {
+    @Test func missingNorthAndExcessiveUncertaintyHaveDifferentStatuses() throws {
+        let glove = FirmwareGlove()
+        var packets: [Data] = []
+        glove.write = { packets.append($0) }
+        func respond(_ payload: [UInt8], at seconds: Double) {
+            var header = Array(packets.last!.prefix(7)); header[2] |= 0x80
+            glove.receive(Data(header + payload), now: epoch.addingTimeInterval(seconds))
+        }
+        func poll(at seconds: Double) {
+            glove.tick(now: epoch.addingTimeInterval(seconds))
+            respond([0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x72, 1], at: seconds + 0.01)
+        }
+        glove.beginLink(now: epoch)
+        respond([31], at: 0.01)
+        respond([0], at: 0.02)
+        glove.calibrate(try calibration())
+        poll(at: 0.1)
+        #expect(glove.message?.contains("true-north correction") == true)
+        #expect(glove.lastHeading == nil)
+        glove.northCorrection = MagneticNorthCorrection(trueHeading: 5, magneticHeading: 0, accuracy: 25, timestamp: epoch)
+        poll(at: 0.3)
+        #expect(glove.message?.contains("uncertainty is too high") == true)
+        #expect(glove.message?.contains("true-north correction") == false)
+        #expect(glove.lastHeading == nil)
+        glove.northCorrection = MagneticNorthCorrection(trueHeading: 5, magneticHeading: 0, accuracy: 5, timestamp: epoch)
+        poll(at: 0.5)
+        #expect(glove.lastHeading?.degrees == 5)
+    }
+
     @Test func relaxedPulsesDoNotRelaxOutdoorGateAndStopWhenHandDrops() throws {
         let glove = FirmwareGlove()
         var packets: [Data] = []
