@@ -42,6 +42,7 @@ private final class CoreHapticOutput: PhoneHapticOutput, @unchecked Sendable {
     private var generation = UUID()
     private var playerGeneration = UUID()
     private var onInterruption: ((PhoneHapticInterruption) -> Void)?
+    private var holdsSession = false
     private var diagnosticLines: [String] = []
     private var bursts = 0
     private var completions = 0
@@ -51,12 +52,22 @@ private final class CoreHapticOutput: PhoneHapticOutput, @unchecked Sendable {
     func prepare(onInterruption: @escaping (PhoneHapticInterruption) -> Void) throws {
         self.onInterruption = onInterruption
         do {
-            let audio = AVAudioSession.sharedInstance()
-            if audio.category == .record {
-                try audio.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+            if !holdsSession {
+                do {
+                    // Hold the shared session for as long as the engine runs. Speech and the
+                    // recorder used to deactivate it when they finished, which stopped the
+                    // engine mid-cue and cost a rebuild. Never reconfigure the category here:
+                    // yanking it away from `.record` would break a live recording.
+                    try AudioSessionCoordinator.shared.acquire(.haptics)
+                    holdsSession = true
+                } catch {
+                    // A refused hold is not fatal by itself; the engine start below decides.
+                    recordDiagnostic("audio session hold failed \(error as NSError)")
+                }
             }
             if engine == nil {
-                // Haptics use their own session, independent of spoken prompts' playback session.
+                // The engine keeps its own session object; the hold above is what keeps the
+                // process's session from being deactivated out from under it.
                 let engine = try CHHapticEngine(audioSession: nil)
                 engine.playsHapticsOnly = true
                 engine.isAutoShutdownEnabled = false
@@ -153,6 +164,10 @@ private final class CoreHapticOutput: PhoneHapticOutput, @unchecked Sendable {
         engine?.resetHandler = {}
         engine?.stop(completionHandler: nil)
         engine = nil
+        if holdsSession {
+            holdsSession = false
+            AudioSessionCoordinator.shared.release(.haptics)
+        }
     }
 
     /// Bounded hardware diagnostics for retrieval from a connected phone. No location,
@@ -160,7 +175,7 @@ private final class CoreHapticOutput: PhoneHapticOutput, @unchecked Sendable {
     private func recordDiagnostic(_ event: String) {
         let audio = AVAudioSession.sharedInstance()
         let route = audio.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
-        let line = "\(ISO8601DateFormatter().string(from: Date())) \(event) engineMuted=\(engine?.isMutedForHaptics ?? false) playerMuted=\(player?.isMuted ?? false) audioCategory=\(audio.category.rawValue) audioMode=\(audio.mode.rawValue) audioRoute=\(route)"
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(event) engineMuted=\(engine?.isMutedForHaptics ?? false) playerMuted=\(player?.isMuted ?? false) audioCategory=\(audio.category.rawValue) audioMode=\(audio.mode.rawValue) audioRoute=\(route) sessionPlan=\(AudioSessionCoordinator.shared.currentPlan) sessionHeld=\(holdsSession)"
         diagnosticLines.append(line)
         if diagnosticLines.count > 120 { diagnosticLines.removeFirst(diagnosticLines.count - 120) }
         let url = URL.documentsDirectory.appending(path: "haptics-diagnostics.log")

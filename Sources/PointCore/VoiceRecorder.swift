@@ -20,6 +20,7 @@ import Speech
 
     private let engine = AVAudioEngine()
     private var tapInstalled = false
+    private var holdsSession = false
     private var file: AVAudioFile?
     private var fileURL: URL?
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -53,12 +54,12 @@ import Speech
         let speechStatus = await Self.speechAuthorization()
         guard recordingID == requestID, !Task.isCancelled else { throw CancellationError() }
 
-        let audio = AVAudioSession.sharedInstance()
-        try audio.setCategory(.record, mode: .measurement)
-        try audio.setActive(true)
+        try AudioSessionCoordinator.shared.acquire(.recording)
+        holdsSession = true
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { throw RecorderError.couldNotRecord }
+        // Release the session hold taken above; this exit does not run the block below.
+        guard format.sampleRate > 0, format.channelCount > 0 else { cancel(); throw RecorderError.couldNotRecord }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("point-\(UUID().uuidString).m4a")
         do {
             let file = try AVAudioFile(forWriting: url, settings: [
@@ -160,7 +161,10 @@ import Speech
         liveTranscript = ""
         endpoint = .listening
         isRecording = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if holdsSession {
+            holdsSession = false
+            AudioSessionCoordinator.shared.release(.recording)
+        }
     }
 
     private func stopCapture() {

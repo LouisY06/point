@@ -87,19 +87,48 @@ import Testing
         output.failPrepare = true
         playback.prepare(now: 1)
         #expect(playback.errorMessage != nil)
-        playback.update(intensity: 0.8, isActive: true, now: 1.5)
+        for tick in 1...4 { playback.update(intensity: 0.8, isActive: true, now: 1 + 0.02 * Double(tick)) }
         #expect(output.preparations == 1) // No retry storm at 20 Hz.
         output.failPrepare = false
-        playback.update(intensity: 0.8, isActive: true, now: 2)
+        playback.update(intensity: 0.8, isActive: true, now: 1.5)
         #expect(output.playing)
         output.failChange = true
-        playback.update(intensity: 0.7, isActive: true, now: 2.05)
+        playback.update(intensity: 0.7, isActive: true, now: 1.55)
         #expect(!output.playing)
         #expect(output.shutdowns == 2)
         output.failChange = false
-        playback.update(intensity: 0.8, isActive: true, now: 3.1)
+        playback.update(intensity: 0.8, isActive: true, now: 2.1)
         #expect(output.playing)
         #expect(playback.errorMessage == nil)
+    }
+
+    @Test func aLostCueRetriesWithinAFrameAndOnlyAPersistentFailureBacksOffToASecond() {
+        let output = FakePhoneHaptics()
+        let playback = PhoneHapticPlayback(output: output)
+        output.failPrepare = true
+        var time = 0.0
+        playback.update(intensity: 0.8, isActive: true, now: time)
+        #expect(output.preparations == 1)
+        for delay in PhoneHapticPlayback.retryDelays + [1] {
+            let attempts = output.preparations
+            playback.update(intensity: 0.8, isActive: true, now: time + delay - 0.01)
+            #expect(output.preparations == attempts)
+            time += delay
+            playback.update(intensity: 0.8, isActive: true, now: time)
+            #expect(output.preparations == attempts + 1)
+        }
+        // An engine that ran normally and then died is a fresh interruption: a spoken prompt
+        // must cost a frame of vibration, not the backed-off second a dying engine earned.
+        output.failPrepare = false
+        playback.update(intensity: 0.8, isActive: true, now: time + 1)
+        playback.update(intensity: 0.8, isActive: true, now: time + 3)
+        output.onInterruption?(.playbackFailed)
+        let attempts = output.preparations
+        playback.update(intensity: 0.8, isActive: true, now: time + 3.05)
+        #expect(output.preparations == attempts)
+        playback.update(intensity: 0.8, isActive: true, now: time + 3.1)
+        #expect(output.preparations == attempts + 1)
+        #expect(output.playing)
     }
 
     @Test func shutdownIgnoresLateCallbacksAndInvalidInputSilences() {
