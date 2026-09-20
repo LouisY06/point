@@ -54,11 +54,11 @@ import Foundation
         tick()
     }
 
-    public func start(_ route: RoutePlan, at location: CLLocation? = nil) throws {
+    public func start(_ route: RoutePlan, at location: CLLocation? = nil, now: Date = Date()) throws {
         routeRequestID = UUID()
-        try navigation.start(route, at: location)
+        try navigation.start(route, at: location, now: now)
         resetFeedback()
-        tick()
+        tick(now: now)
     }
 
     public func stop() {

@@ -108,16 +108,18 @@ struct PointingCalibrationTests {
         }
     }
 
-    @Test func noSixFaceCalibrationButGyroCompassAndNorthStillRequired() {
+    @Test func partialFusionNeedsCompassAndNorthButNotSixFaceOrFullGyroCalibration() {
         for system: UInt8 in 1...3 {
-            for accel: UInt8 in 0...3 {
-                for mag: UInt8 in 2...3 {
-                    let levels = system << 6 | 3 << 4 | accel << 2 | mag
-                    #expect(FirmwareSensorHealth(source: .bno055, calibration: levels, flags: 1).fusionBlockingReason == nil)
+            for gyro: UInt8 in 0...3 {
+                for accel: UInt8 in 0...3 {
+                    for mag: UInt8 in 2...3 {
+                        let levels = system << 6 | gyro << 4 | accel << 2 | mag
+                        #expect(FirmwareSensorHealth(source: .bno055, calibration: levels, flags: 1).fusionBlockingReason == nil)
+                    }
                 }
             }
         }
-        for levels: UInt8 in [0x32, 0x33, 0x62, 0x71, 0x70] {
+        for levels: UInt8 in [0x02, 0x32, 0x33, 0x71, 0x70] {
             #expect(FirmwareSensorHealth(source: .bno055, calibration: levels, flags: 1).fusionBlockingReason != nil)
         }
     }
@@ -140,11 +142,11 @@ struct PointingCalibrationTests {
         #expect(mount.magneticHeading(.init(quaternion: identity, timestamp: epoch, health: healthy), now: epoch) != nil)
     }
 
-    @Test func fullyCalibratedFusionSurvivesIndividualGyroOffsetCalibrationChanges() throws {
+    @Test(arguments: [UInt8(1), 2, 3]) func acquiredFusionSurvivesIndividualGyroOffsetCalibrationChanges(system: UInt8) throws {
         let mount = try calibration()
         for gyro: UInt8 in 0...3 {
-            let health = FirmwareSensorHealth(source: .bno055, calibration: 0xCF | gyro << 4, flags: 1)
-            #expect(health.system == 3 && health.gyro == gyro && health.magnetometer == 3)
+            let health = FirmwareSensorHealth(source: .bno055, calibration: system << 6 | 0x0F | gyro << 4, flags: 1)
+            #expect(health.system == system && health.gyro == gyro && health.magnetometer == 3)
             #expect(health.mountingBlockingReason == nil && health.fusionBlockingReason == nil)
             for heading in [0.0, 45, 180, 350] {
                 let q = quaternion(simd_quatd(angle: -heading * .pi / 180, axis: SIMD3(0, 0, 1)))
@@ -157,9 +159,9 @@ struct PointingCalibrationTests {
                                                 timestamp: epoch, health: health)
             #expect(mount.magneticHeading(lowered, now: epoch) == nil)
         }
-        // Full system calibration does not override compass loss or hardware faults.
+        // Unacquired orientation, compass loss and hardware faults still block guidance.
         for health in [
-            FirmwareSensorHealth(source: .bno055, calibration: 0x8F, flags: 1),
+            FirmwareSensorHealth(source: .bno055, calibration: 0x0F, flags: 1),
             FirmwareSensorHealth(source: .bno055, calibration: 0xCD, flags: 1),
             FirmwareSensorHealth(source: .bno055, calibration: 0xCF, flags: 0),
             FirmwareSensorHealth(source: .bno055, calibration: 0xCF, flags: 5),
@@ -167,6 +169,22 @@ struct PointingCalibrationTests {
         ] {
             #expect(health.fusionBlockingReason != nil)
         }
+    }
+
+    @Test func recordedPostResetLevelsAllowStableFingerSetupWithoutWaitingForFullGyroCalibration() throws {
+        // Connected phone after reset: system 1, gyro 0, accel 0, compass 2.
+        let health = FirmwareSensorHealth(source: .bno055, calibration: 0x42, flags: 1)
+        func window(_ angle: Double, start: Double, jitter: Double = 0) -> [GloveOrientationSample] {
+            samples(simd_quatd(angle: angle, axis: SIMD3(1, 0, 0)), start: start, jitter: jitter).map {
+                .init(quaternion: $0.quaternion, timestamp: $0.timestamp, health: health)
+            }
+        }
+        let down = try #require(PointingCalibration.capture(window(-.pi / 2, start: 0), direction: .down, now: epoch.addingTimeInterval(1.8)))
+        let up = try #require(PointingCalibration.capture(window(.pi / 2, start: 3), direction: .up, now: epoch.addingTimeInterval(4.8)))
+        let mount = try #require(PointingCalibration(first: down, second: up))
+        let forward = GloveOrientationSample(quaternion: quaternion(simd_quatd(angle: 0, axis: SIMD3(0, 0, 1))), timestamp: epoch, health: health)
+        #expect(mount.magneticHeading(forward, now: epoch) != nil)
+        #expect(PointingCalibration.capture(window(-.pi / 2, start: 0, jitter: 10), direction: .down, now: epoch.addingTimeInterval(1.8)) == nil)
     }
 
     @Test func gyroSubscoreChangeDoesNotInventARReferenceShift() {
@@ -271,7 +289,7 @@ struct PointingCalibrationTests {
 }
 
 @MainActor struct QuaternionTransportTests {
-    @Test func liveFullyCalibratedSystemKeepsOrientationAndHapticsThroughGyroSubscoreDrop() throws {
+    @Test(arguments: [UInt8(0x42), 0x82, 0xCF, 0xCE]) func liveAcquiredFusionKeepsOrientationAndHapticsThroughGyroSubscoreDrop(levels: UInt8) throws {
         let glove = FirmwareGlove()
         var packets: [Data] = []
         glove.write = { packets.append($0) }
@@ -293,8 +311,8 @@ struct PointingCalibrationTests {
         poll(0xFF, at: 0.1)
         let northReferenceID = glove.calibrationID
         let roomReferenceID = glove.relativeCalibrationID
-        // Exact phone readings: system 3, gyro 0, accel 3, compass 3 then 2.
-        for (levels, time): (UInt8, Double) in [(0xCF, 0.25), (0xCE, 0.4)] {
+        // Include the exact post-reset 1/0/0/2 and earlier 3/0/3/2 phone readings.
+        for time in [0.25, 0.4] {
             poll(levels, at: time)
             #expect(glove.lastHeading?.degrees == 5)
             #expect(glove.message == "Glove pointing ready")
@@ -308,7 +326,7 @@ struct PointingCalibrationTests {
         respond([0], at: 0.43)
         #expect(glove.lastMotorAcknowledgement == epoch.addingTimeInterval(0.43))
         // An actual loss of fused readiness still halts direction output.
-        poll(0x8F, at: 0.55)
+        poll(0x0F, at: 0.55)
         #expect(glove.lastHeading == nil)
         #expect(glove.pointingCalibration?.finger == saved.finger)
         glove.tick(now: epoch.addingTimeInterval(0.57))
@@ -432,7 +450,7 @@ struct PointingCalibrationTests {
         }
     }
 
-    @Test func hardwareResetStopsMotorPreservesMountAndRejectsPreResetReadings() throws {
+    @Test(arguments: [UInt8(0x30), 0x42, 0x82, 0xCE]) func hardwareResetStopsMotorPreservesMountAndRejectsPreResetReadings(readyCalibration: UInt8) throws {
         let glove = FirmwareGlove()
         var packets: [Data] = []
         glove.write = { packets.append($0) }
@@ -464,7 +482,7 @@ struct PointingCalibrationTests {
         respond([0,64,0,0,0,0,0,0,255,255,1,0,0], at: 0.26)
         #expect(glove.hardwareCalibrationInProgress && glove.orientation == nil)
         glove.tick(now: epoch.addingTimeInterval(0.4))
-        respond([0,64,0,0,0,0,0,0,0,0,1,0x30,1], at: 0.41)
+        respond([0,64,0,0,0,0,0,0,0,0,1,readyCalibration,1], at: 0.41)
         #expect(!glove.hardwareCalibrationInProgress)
         #expect(glove.pointingCalibration?.finger == mount)
         #expect(glove.relativePointing(now: epoch.addingTimeInterval(0.42)) != nil)

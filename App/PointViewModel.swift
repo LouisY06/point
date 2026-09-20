@@ -265,6 +265,16 @@ import UIKit
             "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
             "timestamp": now.timeIntervalSince1970,
             "stage": String(describing: stage),
+            "journeyStarted": journeyStarted,
+            "transitLeg": journeyPhase.legIndex as Any? ?? NSNull(),
+            "transitWalking": { if case .walking = journeyPhase { return true }; return false }(),
+            "transitAwaitingSignal": awaitingSignal,
+            "navigationState": controller.navigation.state.rawValue,
+            "gloveConnection": controller.connection.rawValue,
+            "bluetoothPhase": String(describing: deviceConnection.phase),
+            "bluetoothMessage": deviceConnection.message ?? "none",
+            "firmwareState": String(describing: glove.state),
+            "pointingSetupStatus": deviceConnection.calibrationStatus,
             "locationAuthorization": locationManager.authorizationStatus.rawValue,
             "locationAccuracy": number(currentLocation?.horizontalAccuracy),
             "locationAge": number(currentLocation.map { now.timeIntervalSince($0.timestamp) }),
@@ -282,6 +292,8 @@ import UIKit
             "gloveHeading": number(glove.lastHeading?.degrees),
             "gloveHeadingAge": number(glove.lastHeading.map { now.timeIntervalSince($0.timestamp) }),
             "gloveMessage": glove.message ?? "none",
+            "hardwareCalibrationInProgress": glove.hardwareCalibrationInProgress,
+            "hardwareCalibrationMessage": glove.hardwareCalibrationMessage ?? "none",
             "guidanceStatus": controller.feedback.status.rawValue,
             "pointingError": number(controller.feedback.angularErrorDegrees),
             "directionUncertainty": number(controller.feedback.uncertaintyDegrees),
@@ -310,8 +322,9 @@ import UIKit
         guard stage != .indoorDemo else { return }
         refreshNorthCorrection()
         let previouslyOffRoute = controller.navigation.rerouteRequired
-        let arrival = controller.updateLocation(location)
-        if journeyPlan != nil { journey.updateLocation(location) }
+        let arrival = journeyPlan != nil
+            ? journey.updateLocation(location)
+            : controller.updateLocation(location)
         pointingAligned = controller.feedback.shouldConfirm
         if journeyStarted, let arrival {
             // On a transit journey the coordinator announces stops and the final arrival itself.
@@ -1006,7 +1019,7 @@ import UIKit
                 locationManager.allowsBackgroundLocationUpdates = true
                 locationManager.showsBackgroundLocationIndicator = true
                 locationManager.pausesLocationUpdatesAutomatically = false
-                if let currentLocation { controller.updateLocation(currentLocation); journey.updateLocation(currentLocation) }
+                if let currentLocation { journey.updateLocation(currentLocation) }
                 let first = journeyPlan.rides.first.map { "Walk to \($0.board.name) first." } ?? ""
                 announce("Trip started. \(first) Point with your glove to feel the direction.")
             } catch { fail(error) }

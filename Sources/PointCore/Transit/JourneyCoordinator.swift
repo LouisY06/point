@@ -87,9 +87,7 @@ import Foundation
     private var phaseToken = UUID()
     private var pollToken = UUID()
     private var poll: Task<Void, Never>?
-    private var subscriptions = Set<AnyCancellable>()
     private var lastFix: CLLocation?
-    private var lastNearBoardStopAt: Date?
     private var departedAt: Date?
     private var cued: Set<String> = []
     private var vehicleMisses = 0
@@ -99,10 +97,6 @@ import Foundation
         self.controller = controller
         self.transit = transit
         self.pollInterval = pollInterval
-        controller.navigation.$state.sink { [weak self] state in
-            guard let self, state == .arrived, case .walking(let leg) = phase else { return }
-            walkLegCompleted(leg)
-        }.store(in: &subscriptions)
     }
 
     // MARK: Lifecycle
@@ -157,7 +151,6 @@ import Foundation
         countdown = nil
         alerts = []
         lastFix = nil
-        lastNearBoardStopAt = nil
         departedAt = nil
         cued = []
         awaitingSignal = false
@@ -206,29 +199,24 @@ import Foundation
 
     // MARK: Inputs
 
-    public func updateLocation(_ fix: CLLocation, now: Date = Date()) {
+    /// Transit walking uses the same location, beacon advancement and pointing rules
+    /// as a standalone walk. Complete the leg only after the navigation update returns,
+    /// not from its @Published willSet notification, where stopping would be reentrant.
+    @discardableResult public func updateLocation(_ fix: CLLocation, now: Date = Date()) -> BeaconArrival? {
         lastFix = fix
-        if awaitingSignal, case .walking(let leg) = phase, Self.isFresh(fix, now: now) {
+        guard case .walking(let leg) = phase else { return nil }
+        if awaitingSignal, Self.isFresh(fix, now: now) {
             awaitingSignal = false
             onEvent?(.signalRestored(leg: leg))
         }
-        guard case .walking(let leg) = phase, let rideLeg = rideIndex(after: leg), let ride = ride(at: rideLeg) else { return }
-        let distance = RouteGeometry.distanceMeters(fix.coordinate, ride.board.coordinate)
-        guard fix.horizontalAccuracy >= 0, fix.horizontalAccuracy <= 50 else { return }
-        if distance <= 150 { lastNearBoardStopAt = now }
-        // The session's 8 m / 8 m arrival rule rarely triggers at a station entrance; 40 m is enough.
-        if distance <= 40 { walkLegCompleted(leg, now: now) }
+        let arrival = controller.updateLocation(fix, now: now)
+        if arrival?.isDestination == true { walkLegCompleted(leg, now: now) }
+        return arrival
     }
 
     /// Foreground heartbeat, also called on scene activation to reconcile after a suspension.
     public func tick(now: Date = Date()) {
         switch phase {
-        case .walking(let leg):
-            // Fixes stopped shortly after being near the stop: assume we went underground.
-            if let near = lastNearBoardStopAt, now.timeIntervalSince(near) <= 90,
-               let fix = lastFix, now.timeIntervalSince(fix.timestamp) > 20 {
-                walkLegCompleted(leg, now: now)
-            }
         case .riding(let leg, _, false, _):
             // The train left without us: still within 50 m of the board stop well after departure.
             if let departedAt, now.timeIntervalSince(departedAt) >= 90, let fix = lastFix,
@@ -330,9 +318,8 @@ import Foundation
 
     private func beginWalk(leg: Int, _ walk: RoutePlan, at fix: CLLocation?, now: Date, waitForSignal: Bool = false) throws {
         advance(.walking(leg: leg))
-        lastNearBoardStopAt = nil
         awaitingSignal = waitForSignal
-        try controller.start(walk, at: fix)
+        try controller.start(walk, at: fix, now: now)
         onEvent?(.walkingLegStarted(leg: leg, toward: walk.destinationName))
         // Departure countdown for the stop this leg leads to, shown while walking (no cue).
         if let rideLeg = rideIndex(after: leg), let ride = ride(at: rideLeg) {
