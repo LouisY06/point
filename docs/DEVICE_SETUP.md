@@ -1,14 +1,18 @@
 # Connect a Point device
 
-Point now supports the echo service in `Firmware/BTTest`, introduced in firmware commit `940a071`. This verifies the Bluetooth data path. It does not enable glove heading, gestures, battery telemetry, or vibration.
+The glove is a XIAO ESP32-S3 running the Point S3 ESP-IDF firmware (`Firmware/S3Firmware` on the
+`glove-pocket-integration` branch, with that branch's version of this guide covering scan, connect,
+finger-axis setup and **Test glove vibration**). It advertises as **Point S3**, streams BNO055
+orientation to the phone and drives a DRV2605L motor over the [BLE contract](FIRMWARE_APP_PROTOCOL.md).
+The worn-glove trial was completed at the hackathon on September 20, 2026: the app connected, set up
+the finger axis and buzzed on target during a live walk.
 
-The active hardware is now ESP32-S3. Its current Arduino circuit sketch is USB-only.
-Do not flash the C6 prototype to the S3. The app is ready for the [proposed S3 BLE
-contract](FIRMWARE_APP_PROTOCOL.md), but the board still needs that implementation.
-After echo verification the app checks capabilities: a compatible board enables
-**Test glove vibration**, while an echo-only board shows firmware support pending.
-For real glove navigation, connect here and turn off **Phone vibration guidance**
-before starting a walk. Relative gyro yaw will display a north-reference requirement.
+This page documents the earlier **echo** service in `Firmware/BTTest` (firmware commit `940a071`),
+which verifies the Bluetooth data path only. It does not enable glove heading, gestures, battery
+telemetry or vibration. Do not flash the C6 prototype to the S3. After echo verification the app
+checks capabilities: a compatible board enables **Test glove vibration**, while an echo-only board
+shows firmware support pending. For real glove navigation, connect the S3 and turn off **Phone
+vibration guidance** before starting a walk.
 
 ## Legacy C6 echo test
 
@@ -64,4 +68,4 @@ The implementation follows Apple's [central-role workflow](https://developer.app
 - The core suite includes five passing echo-protocol tests; see the project plan for the current full-suite and Apple Maps validation results.
 - Simulator and unsigned physical-iPhone builds succeed.
 - Setup opening, simulator recovery message, and dismissal were checked in the simulator.
-- A live iPhone-to-board connection has not yet been exercised. Run the bench steps above, then check board power loss, Bluetooth off, permission denial, missing reply, reconnect, and background/foreground behavior with actual hardware.
+- The live iPhone-to-board link was exercised with the S3 glove at the hackathon (connect, finger-axis setup, vibration on target). Board power loss, Bluetooth off, permission denial, missing reply, reconnect and background/foreground behaviour still deserve a deliberate pass on hardware.
