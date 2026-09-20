@@ -3,6 +3,8 @@ import SwiftUI
 enum PointTheme {
     static let accent = oklch(0.51, 0.12, 70)
     static let route = oklch(0.66, 0.14, 70)
+    // Bright, luminous orange so the wordmark dot pops against the background.
+    static let logoDot = oklch(0.84, 0.18, 62)
     static let background = Color(uiColor: .systemBackground)
     // Standalone links need a lighter gold on dark surfaces than filled buttons do.
     static let action = Color(uiColor: UIColor { traits in
