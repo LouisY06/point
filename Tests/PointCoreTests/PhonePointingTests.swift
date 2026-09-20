@@ -91,7 +91,7 @@ struct PhonePointingTests {
                                        enabled: true, rerouteRequired: false, now: now)
         let angle = try #require(feedback.angularErrorDegrees)
         #expect(abs(angle - 3) < 0.01)
-        #expect(!feedback.shouldConfirm) // Glove confirmation stays conservative.
+        #expect(!feedback.shouldConfirm) // First sample starts the alignment dwell.
         #expect(PhoneHapticEnvelope.targetIntensity(errorDegrees: feedback.conservativeErrorDegrees!) == 0)
         #expect(PhoneHapticEnvelope.targetIntensity(errorDegrees: angle) > 0.78)
         var envelope = PhoneHapticEnvelope()

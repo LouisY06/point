@@ -86,6 +86,106 @@ struct FeedbackTests {
         #expect(!evaluate(&engine, degrees: 50, seconds: 0.5).shouldConfirm)
     }
 
+    @Test func acceptedHeadingUncertaintyDoesNotMakeAlignmentImpossible() {
+        for uncertainty in [15.0, 17.432, 24.9, 25] {
+            var engine = DirectionFeedbackEngine()
+            func check(_ angle: Double, at seconds: Double) -> DirectionFeedback {
+                let now = epoch.addingTimeInterval(seconds)
+                return engine.evaluate(target: plan().beacons[0], location: location(seconds: seconds, accuracy: 0),
+                    heading: .init(degrees: angle, accuracyDegrees: uncertainty, timestamp: now, reference: .trueNorth),
+                    connected: true, enabled: true, rerouteRequired: false, now: now)
+            }
+            #expect(check(0, at: 0).status == .checking)
+            #expect(check(25, at: 0.1).status == .checking)
+            #expect(check(25, at: 0.21).shouldConfirm)
+            #expect(check(35, at: 0.3).shouldConfirm)
+            #expect(check(35.1, at: 0.4).status == .offDirection)
+            #expect(check(25.1, at: 0.5).status == .offDirection)
+            #expect(check(335, at: 0.6).status == .checking)
+            #expect(check(335, at: 0.81).shouldConfirm)
+            #expect(check(180, at: 0.9).status == .offDirection)
+        }
+    }
+
+    @Test func nearbyBeaconUsesEstimatedDirectionDespiteGPSUncertainty() {
+        var engine = DirectionFeedbackEngine()
+        var scheduler = HapticScheduler()
+        let target = PingTarget(coordinate: .init(latitude: 42 + 20 / 111_195.0, longitude: -71),
+                               instruction: "North", isFinalDestination: true, bearingAfterTurnDegrees: 0)
+        func check(gpsAccuracy: Double, angle: Double = 0, at seconds: Double) -> DirectionFeedback {
+            let now = epoch.addingTimeInterval(seconds)
+            return engine.evaluate(target: target, location: location(seconds: seconds, accuracy: gpsAccuracy),
+                heading: .init(degrees: angle, accuracyDegrees: 17.432, timestamp: now, reference: .trueNorth),
+                connected: true, enabled: true, rerouteRequired: false, now: now)
+        }
+        // Reproduces the phone's ~20 m beacon and ±15 m location estimate.
+        #expect(check(gpsAccuracy: 15, at: 0).status == .checking)
+        let aligned = check(gpsAccuracy: 15, at: 0.21)
+        #expect((aligned.uncertaintyDegrees ?? 0) > 60)
+        #expect(scheduler.command(for: aligned, now: epoch.addingTimeInterval(0.21)) == .confirm(durationMs: 180, intensity: 160))
+        // Crossing inside the GPS uncertainty circle no longer suppresses pointing.
+        #expect(check(gpsAccuracy: 25, at: 0.3).shouldConfirm)
+        let turnedAway = check(gpsAccuracy: 25, angle: 36, at: 0.4)
+        #expect(turnedAway.status == .offDirection)
+        #expect(scheduler.command(for: turnedAway, now: epoch.addingTimeInterval(0.4)) == .stop)
+        #expect(check(gpsAccuracy: 25, at: 0.5).status == .checking)
+        #expect(check(gpsAccuracy: 25, at: 0.71).shouldConfirm)
+        #expect(check(gpsAccuracy: 26, at: 0.8).status == .locationUnavailable)
+    }
+
+    @Test func pointingToleranceDoesNotTightenWithBeaconDistance() {
+        for meters in [5.0, 10, 20, 100, 1_000] {
+            let target = PingTarget(coordinate: .init(latitude: origin.latitude + meters / 111_195, longitude: origin.longitude),
+                                   instruction: "North", isFinalDestination: true, bearingAfterTurnDegrees: 0)
+            var engine = DirectionFeedbackEngine()
+            func check(_ angle: Double, at seconds: Double) -> DirectionFeedback {
+                let now = epoch.addingTimeInterval(seconds)
+                return engine.evaluate(target: target, location: location(seconds: seconds, accuracy: 15),
+                    heading: .init(degrees: angle, accuracyDegrees: 17.432, timestamp: now, reference: .trueNorth),
+                    connected: true, enabled: true, rerouteRequired: false, now: now)
+            }
+            #expect(check(26, at: 0).status == .offDirection)
+            #expect(check(25, at: 0.1).status == .checking)
+            #expect(check(25, at: 0.31).shouldConfirm)
+            #expect(check(35, at: 0.4).shouldConfirm)
+            #expect(check(36, at: 0.5).status == .offDirection)
+        }
+    }
+
+    @Test @MainActor func recordedGloveEstimateReachesTheMotorQueueWhenPointingAtBeacon() throws {
+        let glove = SimulatedGlove()
+        let point = PointController(glove: glove)
+        glove.connect()
+        try point.start(plan())
+        let nearBeacon = CLLocationCoordinate2D(latitude: north.latitude - 20 / 111_195.0, longitude: north.longitude)
+        point.updateLocation(location(nearBeacon, accuracy: 15), now: epoch)
+        for seconds in [0.0, 0.1, 0.21] {
+            let now = epoch.addingTimeInterval(seconds)
+            point.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: now, reference: .trueNorth)), now: now)
+        }
+        #expect(point.feedback.shouldConfirm)
+        #expect((point.feedback.uncertaintyDegrees ?? 0) > 60)
+        #expect(glove.commands.last == .confirm(durationMs: 180, intensity: 160))
+        #expect(point.lastQueuedHapticCommand == glove.commands.last)
+        #expect(point.lastTransportError == nil)
+        // A real turn away stops output, even though north and sensor accuracy remain valid.
+        point.receive(.heading(.init(degrees: 90, accuracyDegrees: 17.432, timestamp: epoch.addingTimeInterval(0.5), reference: .trueNorth)),
+                      now: epoch.addingTimeInterval(0.5))
+        #expect(point.feedback.status == .offDirection)
+        #expect(glove.commands.last == .stop)
+        #expect(point.lastQueuedHapticCommand == .stop)
+        // Stale location still halts a previously active motor.
+        point.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: epoch.addingTimeInterval(0.6), reference: .trueNorth)),
+                      now: epoch.addingTimeInterval(0.6))
+        point.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: epoch.addingTimeInterval(0.81), reference: .trueNorth)),
+                      now: epoch.addingTimeInterval(0.81))
+        #expect(point.feedback.shouldConfirm)
+        point.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: epoch.addingTimeInterval(5.1), reference: .trueNorth)),
+                      now: epoch.addingTimeInterval(5.1))
+        #expect(point.feedback.status == .locationUnavailable)
+        #expect(glove.commands.last == .stop)
+    }
+
     @Test func rejectsUncalibratedAndStaleOrientation() {
         var engine = DirectionFeedbackEngine()
         #expect(evaluate(&engine, degrees: 0, seconds: 0, reference: .relative).status == .calibrationRequired)

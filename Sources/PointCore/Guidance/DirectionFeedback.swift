@@ -47,11 +47,13 @@ public struct DirectionFeedback {
     public let angularErrorDegrees: Double?
     public let distanceToBeaconMeters: Double?
     public var conservativeErrorDegrees: Double? = nil
+    public var uncertaintyDegrees: Double? = nil
     public var locationIssue: LocationFeedbackIssue? = nil
     public var shouldConfirm: Bool { status == .aligned }
 }
 
-/// Positive confirmation only. Silence never means that the route is obstacle-free.
+/// Confirms estimated pointing alignment, with accuracy retained for diagnostics.
+/// Silence never means that the route is obstacle-free.
 /// All bearings are clockwise from true north. Hardware adapters must correct mount/IMU frames.
 public struct DirectionFeedbackEngine {
     private var aligned = false
@@ -105,8 +107,9 @@ public struct DirectionFeedbackEngine {
         previousEvaluation = now
 
         let distance = RouteGeometry.distanceMeters(location.coordinate, target.coordinate)
-        // Inside the uncertainty circle, the bearing to the beacon is not dependable.
-        guard distance > max(3, location.horizontalAccuracy) else {
+        // Use the estimated bearing even inside the GPS uncertainty circle. A
+        // near-zero target still has no useful pointing direction.
+        guard distance > 3 else {
             reset()
             return DirectionFeedback(status: .locationUnavailable, angularErrorDegrees: nil,
                                      distanceToBeaconMeters: distance,
@@ -114,20 +117,26 @@ public struct DirectionFeedbackEngine {
         }
         let bearing = RouteGeometry.bearingDegrees(from: location.coordinate, to: target.coordinate)
         let error = Self.signedAngle(bearing - heading.degrees)
-        // Leave a margin for both heading and position uncertainty before confirming.
+        // Uncertainty and pointing error are different quantities. Use the measured
+        // direction for feedback; retain the uncertainty for troubleshooting, without
+        // making vibration impossible for nearby beacons under ordinary GPS error.
         let positionError = asin(min(1, location.horizontalAccuracy / distance)) * 180 / .pi
-        let conservativeError = abs(error) + heading.accuracyDegrees + positionError
+        let uncertainty = heading.accuracyDegrees + positionError
+        let conservativeError = abs(error) + uncertainty
+        let entryAngle = 25.0
+        let exitAngle = 35.0
+        let dwell = 0.2
         if aligned {
-            if conservativeError > 25 { aligned = false; candidateSince = nil }
-        } else if conservativeError <= 15 {
+            if abs(error) > exitAngle { aligned = false; candidateSince = nil }
+        } else if abs(error) <= entryAngle {
             if candidateSince == nil { candidateSince = now }
-            if now.timeIntervalSince(candidateSince!) >= 0.35 { aligned = true }
+            if now.timeIntervalSince(candidateSince!) >= dwell { aligned = true }
         } else {
             candidateSince = nil
         }
         return DirectionFeedback(status: aligned ? .aligned : candidateSince == nil ? .offDirection : .checking,
                                  angularErrorDegrees: error, distanceToBeaconMeters: distance,
-                                 conservativeErrorDegrees: conservativeError)
+                                 conservativeErrorDegrees: conservativeError, uncertaintyDegrees: uncertainty)
     }
 
     public static func signedAngle(_ degrees: Double) -> Double {

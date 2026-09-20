@@ -111,14 +111,14 @@ error = wrap180( bearing_true − heading_true )
 
 - `error < 0` → target is to the left of where the hand points
 - `error > 0` → target is to the right
-- `|error| < ON_TARGET_DEG` (start with 15°) → on target
+- `|error| ≤ 25°` for 200 ms → on target; remain aligned until `|error| > 35°`
 
 ## 4. Where computation lives
 
 Under the current interface the **phone is the brain**: it owns routing *and* the alignment decision, and it drives the glove with semantic commands. The glove is a heading sensor plus a haptic actuator — it does not compute the pointing error or decide when to buzz. See [HARDWARE_INTERFACE.md](HARDWARE_INTERFACE.md) for the authoritative contract.
 
 - **Glove → phone (streaming):** true-north pointing heading (§3.3), an estimated heading accuracy, and a sample time. Optionally calibration status and gesture/battery events. This is the output of §2–§3.3 running on the glove.
-- **Phone:** computes `bearing_true` to the active waypoint (§3.4), compares it against the glove heading to get `error` (§3.5), then applies the uncertainty margin, stale-data rejection, dwell, and hysteresis from §9 before deciding alignment.
+- **Phone:** computes `bearing_true` to the active waypoint (§3.4), compares it against the glove heading to get `error` (§3.5), then applies the validity checks, dwell, and hysteresis from §9 before deciding alignment. Combined heading and GPS bearing uncertainty is retained for diagnostics only.
 - **Phone → glove:** `confirm(durationMs, intensity)` once alignment is stable, `stop` when pointing is lost or the data becomes unreliable. There are no left/right/on-target motor codes in this version.
 
 The glove must end a finite `confirm` pulse locally even if BLE disconnects or iOS suspends the app, and must not keep buzzing on stale data.
@@ -178,9 +178,10 @@ From the current project tuning (see [PROJECT_PLAN.md](PROJECT_PLAN.md)):
 || Required heading frame | True north |
 || Maximum heading age | 0.5 seconds |
 || Maximum heading uncertainty | 25 degrees |
-|| Enter alignment | Conservative angular error at most 15 degrees |
-|| Leave alignment | Conservative angular error above 25 degrees |
-|| Stable alignment dwell | 350 ms |
+|| Combined heading and position angular uncertainty | Diagnostic only |
+|| Enter alignment | Measured angular error at most 25 degrees |
+|| Leave alignment | Measured angular error above 35 degrees |
+|| Stable alignment dwell | 200 ms |
 || Confirmation pulse | 180 ms; intensity value 160 on the app's UInt8 scale |
 || Minimum interval between pulses | 900 ms |
 

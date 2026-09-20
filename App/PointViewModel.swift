@@ -277,7 +277,18 @@ import UIKit
             "correctionAge": number(correction.map { now.timeIntervalSince($0.timestamp) }),
             "gloveMountUncertainty": number(glove.pointingCalibration?.uncertainty),
             "gloveCalibration": glove.sensorHealth.map { Int($0.calibration) } as Any? ?? NSNull(),
-            "gloveMessage": glove.message ?? "none"
+            "gloveMessage": glove.message ?? "none",
+            "guidanceStatus": controller.feedback.status.rawValue,
+            "pointingError": number(controller.feedback.angularErrorDegrees),
+            "directionUncertainty": number(controller.feedback.uncertaintyDegrees),
+            "conservativeError": number(controller.feedback.conservativeErrorDegrees),
+            "beaconDistance": number(controller.feedback.distanceToBeaconMeters),
+            "beaconIndex": controller.navigation.beaconIndex,
+            "locationQuality": controller.navigation.locationQuality.rawValue,
+            "lastQueuedHaptic": controller.lastQueuedHapticCommand.map { String(describing: $0) } ?? "none",
+            "lastHapticQueuedAge": number(controller.lastHapticQueuedAt.map { now.timeIntervalSince($0) }),
+            "lastMotorAcknowledgementAge": number(glove.lastMotorAcknowledgement.map { now.timeIntervalSince($0) }),
+            "transportError": controller.lastTransportError ?? "none"
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: snapshot, options: [.prettyPrinted, .sortedKeys]) else { return }
         let url = URL.documentsDirectory.appending(path: "north-reference-diagnostics.json")
