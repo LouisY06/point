@@ -63,6 +63,7 @@ import UIKit
     private var gloveWatchdog: Task<Void, Never>?
     private(set) var controller: PointController!
     private let locationManager = CLLocationManager()
+    private var northReference = MagneticNorthCorrectionCache()
     private var work: Task<Void, Never>?
     private var recordingLimit: Task<Void, Never>?
     private var replyListeningTask: Task<Void, Never>?
@@ -136,6 +137,9 @@ import UIKit
         locationManager.headingOrientation = .portrait
         locationManager.headingFilter = kCLHeadingFilterNone
         locationManager.activityType = .fitness
+        deviceConnection.$phase.receive(on: RunLoop.main).sink { [weak self] phase in
+            if phase == .connected { self?.refreshNorthCorrection() }
+        }.store(in: &subscriptions)
         controller.navigation.$state.sink { [weak self] state in
             guard let self else { return }
             journeyState = state
@@ -208,23 +212,31 @@ import UIKit
             manager.startUpdatingLocation()
         } else if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
             currentLocation = nil
+            northReference.clear()
+            deviceConnection.glove.northCorrection = nil
             pauseJourney()
         }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
-        // Use the difference of one paired reading, never the phone's direction as
-        // the glove's direction. Only refresh the local correction with a fresh fix.
+        guard stage != .indoorDemo else { return }
+        // Phone rotation cancels in this paired difference. Keep a valid local
+        // reference through temporary GPS/compass noise instead of starting over.
         let now = Date()
-        if let location = currentLocation,
-           CLLocationCoordinate2DIsValid(location.coordinate),
-           (0...25).contains(location.horizontalAccuracy),
-           (0...5).contains(now.timeIntervalSince(location.timestamp)),
-           (0...5).contains(now.timeIntervalSince(newHeading.timestamp)) {
-            deviceConnection.glove.northCorrection = MagneticNorthCorrection(
-                trueHeading: newHeading.trueHeading, magneticHeading: newHeading.magneticHeading,
-                accuracy: newHeading.headingAccuracy, timestamp: newHeading.timestamp)
-        } else { deviceConnection.glove.northCorrection = nil }
+        northReference.update(trueHeading: newHeading.trueHeading, magneticHeading: newHeading.magneticHeading,
+                              accuracy: newHeading.headingAccuracy, timestamp: newHeading.timestamp,
+                              location: currentLocation, now: now)
+        refreshNorthCorrection(now: now)
+    }
+
+    private func refreshNorthCorrection(now: Date = Date()) {
+        let authorized = locationManager.authorizationStatus == .authorizedWhenInUse
+            || locationManager.authorizationStatus == .authorizedAlways
+        guard authorized, stage != .indoorDemo else {
+            deviceConnection.glove.northCorrection = nil
+            return
+        }
+        deviceConnection.glove.northCorrection = northReference.correction(at: currentLocation, now: now)
     }
 
     func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool {
@@ -235,6 +247,7 @@ import UIKit
         guard !isDemo, let location = locations.last else { return }
         currentLocation = location
         guard stage != .indoorDemo else { return }
+        refreshNorthCorrection()
         let previouslyOffRoute = controller.navigation.rerouteRequired
         let arrival = controller.updateLocation(location)
         if journeyPlan != nil { journey.updateLocation(location) }
@@ -959,6 +972,7 @@ import UIKit
         locationManager.startUpdatingHeading()
         gloveWatchdog = Task { [weak self] in
             while !Task.isCancelled {
+                self?.refreshNorthCorrection()
                 self?.controller.tick()
                 do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
             }
@@ -1050,6 +1064,7 @@ import UIKit
         guard stage != .indoorDemo else { return }
         requestLocation()
         locationManager.startUpdatingHeading()
+        refreshNorthCorrection()
         if stage == .route, !isDemo {
             if journeyStarted { startGloveWatchdog() }
             if journeyPlan != nil { journey.tick() }
@@ -1079,6 +1094,7 @@ import UIKit
         if stage == .recording || stage == .searching { cancel() }
         requestLocation()
         locationManager.startUpdatingHeading()
+        refreshNorthCorrection()
     }
 
     private func fail(_ error: Error) {

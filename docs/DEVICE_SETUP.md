@@ -26,7 +26,7 @@ Calibrate the glove once, then open the indoor demo. The default is a **single b
 - **Firmware support pending:** install the matching S3 firmware. The legacy C6 echo service verifies communication only.
 - **Pose capture fails:** follow the gyro/compass settling message and hold the glove still with a straight finger in the requested direction.
 - **Upward pose disagrees:** point the same straight finger directly upward and check that the mounting did not shift. Start over after moving away from magnetic interference.
-- **Waiting for true-north correction:** allow location access and wait for fresh GPS/compass readings. Indoor room guidance instead uses magnetic heading and its explicit room alignment.
+- **Waiting for true-north correction:** outdoor guidance needs one valid phone compass/location reference. It is then retained through brief sensor interruptions for up to 30 minutes within 2 km, with automatic refresh from equally good or better readings. Allow location access if no reference is available. Indoor room guidance uses its own room alignment and does not require this correction.
 - **Background or disconnect:** Point reconnects to its remembered glove when it returns to the foreground. The active pocket background test can retain the Bluetooth link. The saved mounting direction restores on reconnection; do not repeat the poses unless the sensor moved. An explicit **Disconnect** pauses automatic reconnection until you select a glove again.
 - **Simulator:** previews screens only; it cannot validate Bluetooth, glove orientation or vibration.
 

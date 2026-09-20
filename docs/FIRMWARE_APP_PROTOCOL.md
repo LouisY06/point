@@ -170,11 +170,20 @@ glove.trueHeading = wrap360(glove.magneticHeading + declination)
 
 The phone can face another direction: its orientation cancels in the difference.
 The phone supplies the local north correction, not glove pointing. The app runs
-phone heading updates in real-glove mode, requires a fresh usable GPS fix when
-refreshing correction, rejects invalid paired headings, and expires correction
-after five seconds. It conservatively adds phone heading uncertainty to the glove
-estimate; combined uncertainty above 25° pauses output. Relative yaw is never corrected
-this way. Missing correction, calibration loss and stale samples clear guidance.
+phone heading updates in real-glove mode and caches a valid paired correction in memory.
+Capturing requires a heading no older than five seconds and a location no older than
+60 seconds with horizontal accuracy within 250 m. The local correction lasts at most
+30 minutes and stays within 2 km of its capture location (including both fixes' uncertainty).
+Location callbacks invalidate a reference after leaving that area even before another heading
+arrives. Missing, invalid, older or less accurate phone updates do not replace a usable
+reference or extend its lifetime. Resuming the app or reconnecting BLE can restore the
+cached reference; revoking location access clears it. These are conservative local reuse
+limits, not a measured guarantee of compass accuracy.
+
+The app still conservatively adds phone heading uncertainty to the glove estimate;
+combined uncertainty above 25° pauses output. Live glove samples still expire after
+500 ms, and route GPS checks are unchanged. Relative yaw is never corrected this way.
+Missing/expired correction, calibration loss and stale glove samples clear guidance.
 
 References: [Bosch BNO055 datasheet](https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bno055-ds000.pdf)
 (NDOF, axis remap, CALIB_STAT) and [Apple CLHeading](https://developer.apple.com/documentation/corelocation/clheading)
