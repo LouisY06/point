@@ -4,6 +4,18 @@ import Testing
 @testable import PointCore
 
 struct DestinationConversationTests {
+    @Test func intentModelDefaultsToGPT55WithReasoningOff() {
+        let defaults = VoiceConfiguration()
+        #expect(defaults.intentModel == "gpt-5.5" && defaults.intentReasoning == "none")
+        let custom = VoiceConfiguration(fileContents: "OPENAI_INTENT_MODEL=gpt-4.1\nOPENAI_INTENT_REASONING=low")
+        #expect(custom.intentModel == "gpt-4.1" && custom.intentReasoning == "low")
+        // Only reasoning models take the effort parameter; older models reject it.
+        #expect(OpenAIDestinationInterpreter.supportsReasoningEffort("gpt-5.5"))
+        #expect(OpenAIDestinationInterpreter.supportsReasoningEffort("o4-mini"))
+        #expect(!OpenAIDestinationInterpreter.supportsReasoningEffort("gpt-4.1"))
+        #expect(!OpenAIDestinationInterpreter.supportsReasoningEffort("gpt-4o-mini"))
+    }
+
     @Test func intentContextSeparatesCurrentCityFromRequestedCity() throws {
         let context = DestinationContext(requestedCity: "Cambridge", currentCity: "Boston", confirmationPending: true,
                                          destinationName: "Shake Shack")

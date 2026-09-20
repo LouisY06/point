@@ -69,12 +69,15 @@ public struct DestinationContext: Encodable {
         request.timeoutInterval = 10
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        var body: [String: Any] = [
             "model": configuration.intentModel, "store": false, "max_output_tokens": 300,
             "instructions": instructions,
             "input": "Context: \(contextJSON)\nUser request: \(text)",
             "text": ["format": ["type": "json_schema", "name": "destination_intent", "strict": true, "schema": schema]]
-        ])
+        ]
+        // Reasoning models think before answering unless told not to; a navigation prompt needs the answer, not the thinking.
+        if Self.supportsReasoningEffort(configuration.intentModel) { body["reasoning"] = ["effort": configuration.intentReasoning] }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await session.data(for: request)
         try Task.checkCancellation()
         guard let response = response as? HTTPURLResponse else { throw ServiceError.invalidResponse }
@@ -95,6 +98,11 @@ public struct DestinationContext: Encodable {
         let intent = try JSONDecoder().decode(DestinationIntent.self, from: Data(text.utf8))
         guard intent.query.count <= 500, intent.city.count <= 120 else { throw ServiceError.invalidResponse }
         return intent
+    }
+
+    /// GPT-5 and o-series models accept `reasoning.effort`; GPT-4.1 and 4o reject the parameter.
+    nonisolated public static func supportsReasoningEffort(_ model: String) -> Bool {
+        model.hasPrefix("gpt-5") || model.hasPrefix("o1") || model.hasPrefix("o3") || model.hasPrefix("o4")
     }
 }
 
