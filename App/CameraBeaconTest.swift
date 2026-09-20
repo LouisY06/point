@@ -478,9 +478,10 @@ struct CameraBeaconTestView: View {
             Button { showHelp = true } label: {
                 Image(systemName: "questionmark.circle").font(.title3).frame(width: 44, height: 44)
             }.accessibilityLabel("Demo help")
-            Button("Done") { model.close(); dismiss() }
-                .font(.body.weight(.semibold)).frame(minWidth: 44, minHeight: 44)
-                .accessibilityLabel("Exit demo")
+            Button { model.close(); dismiss() } label: {
+                Text("Done").font(.body.weight(.semibold)).frame(minWidth: 44, minHeight: 44)
+            }
+            .accessibilityLabel("Exit demo")
         }
         // Navigation chrome stays compact; instructions and actions below retain full Dynamic Type.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
