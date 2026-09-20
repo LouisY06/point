@@ -25,11 +25,29 @@ public enum FeedbackStatus: String {
     case rerouteRequired, checking, offDirection, aligned
 }
 
+public enum LocationFeedbackIssue: Equatable {
+    case missing, invalid
+    case inaccurate(meters: Double)
+    case stale(seconds: Double)
+    case nearby(distance: Double, uncertainty: Double)
+
+    public var message: String {
+        switch self {
+        case .missing: return "Vibration paused · Waiting for a GPS fix"
+        case .invalid: return "Vibration paused · GPS fix unavailable"
+        case .inaccurate(let meters): return "Vibration paused · GPS uncertainty ±\(meters.formatted(.number.precision(.fractionLength(0)))) m"
+        case .stale(let seconds): return "Vibration paused · GPS last updated \(seconds.formatted(.number.precision(.fractionLength(0)))) s ago"
+        case .nearby: return "Near beacon · Waiting for GPS to confirm position"
+        }
+    }
+}
+
 public struct DirectionFeedback {
     public let status: FeedbackStatus
     public let angularErrorDegrees: Double?
     public let distanceToBeaconMeters: Double?
     public var conservativeErrorDegrees: Double? = nil
+    public var locationIssue: LocationFeedbackIssue? = nil
     public var shouldConfirm: Bool { status == .aligned }
 }
 
@@ -51,18 +69,29 @@ public struct DirectionFeedbackEngine {
     public mutating func evaluate(target: PingTarget?, location: CLLocation?, heading: HeadingReading?,
                                   connected: Bool, enabled: Bool, rerouteRequired: Bool,
                                   now: Date = Date()) -> DirectionFeedback {
-        func unavailable(_ status: FeedbackStatus) -> DirectionFeedback {
-            DirectionFeedback(status: status, angularErrorDegrees: nil, distanceToBeaconMeters: nil)
+        func unavailable(_ status: FeedbackStatus, locationIssue: LocationFeedbackIssue? = nil) -> DirectionFeedback {
+            DirectionFeedback(status: status, angularErrorDegrees: nil, distanceToBeaconMeters: nil,
+                              locationIssue: locationIssue)
         }
         guard enabled, let target else { reset(); return unavailable(.inactive) }
         guard connected else { reset(); return unavailable(.disconnected) }
         guard !rerouteRequired else { reset(); return unavailable(.rerouteRequired) }
-        guard let location,
-              CLLocationCoordinate2DIsValid(location.coordinate),
-              location.horizontalAccuracy.isFinite,
-              (0...25).contains(location.horizontalAccuracy),
-              (0...5).contains(now.timeIntervalSince(location.timestamp)) else {
-            reset(); return unavailable(.locationUnavailable)
+        guard let location else {
+            reset(); return unavailable(.locationUnavailable, locationIssue: .missing)
+        }
+        guard CLLocationCoordinate2DIsValid(location.coordinate), location.horizontalAccuracy.isFinite,
+              location.horizontalAccuracy >= 0 else {
+            reset(); return unavailable(.locationUnavailable, locationIssue: .invalid)
+        }
+        guard location.horizontalAccuracy <= 25 else {
+            reset(); return unavailable(.locationUnavailable, locationIssue: .inaccurate(meters: location.horizontalAccuracy))
+        }
+        let locationAge = now.timeIntervalSince(location.timestamp)
+        guard locationAge.isFinite, locationAge >= 0 else {
+            reset(); return unavailable(.locationUnavailable, locationIssue: .invalid)
+        }
+        guard locationAge <= 5 else {
+            reset(); return unavailable(.locationUnavailable, locationIssue: .stale(seconds: locationAge))
         }
         guard let heading, heading.degrees.isFinite, (0..<360).contains(heading.degrees),
               heading.accuracyDegrees.isFinite, (0...25).contains(heading.accuracyDegrees),
@@ -78,7 +107,10 @@ public struct DirectionFeedbackEngine {
         let distance = RouteGeometry.distanceMeters(location.coordinate, target.coordinate)
         // Inside the uncertainty circle, the bearing to the beacon is not dependable.
         guard distance > max(3, location.horizontalAccuracy) else {
-            reset(); return unavailable(.locationUnavailable)
+            reset()
+            return DirectionFeedback(status: .locationUnavailable, angularErrorDegrees: nil,
+                                     distanceToBeaconMeters: distance,
+                                     locationIssue: .nearby(distance: distance, uncertainty: location.horizontalAccuracy))
         }
         let bearing = RouteGeometry.bearingDegrees(from: location.coordinate, to: target.coordinate)
         let error = Self.signedAngle(bearing - heading.degrees)

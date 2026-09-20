@@ -18,7 +18,7 @@ struct DeviceSetupView: View {
                             .accessibilityAddTraits(.isHeader)
                         Text(connection.isConnected
                              ? "Your iPhone and \(connection.deviceName ?? "device") can send and receive messages."
-                             : "Power on BT Test C6 and keep it near your iPhone. Then scan and select your device.")
+                             : "Power on your Point device with Bluetooth firmware and keep it near your iPhone. Then scan and select your device.")
                             .font(.body).foregroundStyle(.secondary)
                         if connection.isWorking {
                             HStack(spacing: 12) {
@@ -67,7 +67,7 @@ struct DeviceSetupView: View {
 
                 if connection.isConnected {
                     Section("Connection test") {
-                        LabeledContent("Device", value: connection.deviceName ?? "BT Test C6")
+                        LabeledContent("Device", value: connection.deviceName ?? "Point device")
                         if let verifiedAt = connection.verifiedAt {
                             LabeledContent("Last verified") { Text(verifiedAt, style: .time) }
                         }
@@ -77,6 +77,13 @@ struct DeviceSetupView: View {
                         }
                         Button("Test connection again") { connection.testConnection() }
                             .frame(minHeight: 44)
+                    }
+                    Section("Glove") {
+                        Text(connection.firmwareMessage)
+                        if connection.canTestMotor {
+                            Button("Test glove vibration") { connection.testMotor() }
+                                .frame(minHeight: 44)
+                        }
                     }
                 }
 
@@ -92,7 +99,7 @@ struct DeviceSetupView: View {
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                 } footer: {
-                    Text("This firmware tests the Bluetooth connection. Glove direction and vibration support are still being added.")
+                    Text("Glove controls appear when the device reports support. The current Arduino circuit test uses USB only; its Bluetooth integration is still being added.")
                 }
             }
             .navigationTitle("Device setup")

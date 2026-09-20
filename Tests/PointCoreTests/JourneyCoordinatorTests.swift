@@ -6,6 +6,40 @@ import Testing
 @MainActor struct JourneyCoordinatorTests {
     let epoch = Date(timeIntervalSince1970: 50_000)
 
+    @Test func manualBoardingWithoutPredictionsRemainsUsable() throws {
+        let controller = PointController(glove: SimulatedGlove())
+        let coordinator = JourneyCoordinator(controller: controller, transit: FakeTransit())
+        try coordinator.start(makePlan(), now: epoch)
+        coordinator.confirmAtStop(now: epoch)
+        coordinator.confirmBoarded(now: epoch)
+        #expect(coordinator.phase == .riding(leg: 1, tripID: nil, confirmed: true, tracking: .lost))
+        #expect(controller.navigation.activeBeacon == nil)
+        coordinator.confirmAlighted(now: epoch)
+        #expect(coordinator.phase == .waitingAtStop(leg: 3))
+        coordinator.stop()
+    }
+
+    @Test func pollingContinuesAfterArrivalAndManualBoarding() async throws {
+        let transit = FakeTransit()
+        transit.arrivalsQueue = [
+            [arrival("trip-A", status: .stoppedAt, platform: "r-kendall-s")],
+            [arrival("trip-A", status: .inTransitTo, platform: "r-charles-s")]
+        ]
+        let coordinator = JourneyCoordinator(controller: PointController(glove: SimulatedGlove()), transit: transit,
+                                             pollInterval: .milliseconds(10))
+        coordinator.cueArrivalsWhileWalking = false
+        try coordinator.start(makePlan())
+        coordinator.confirmAtStop()
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(transit.arrivalsQueue.isEmpty)
+        #expect(coordinator.phase.isRiding)
+        coordinator.confirmBoarded()
+        // Three missing vehicles should reach lost tracking through the actual polling loop.
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(coordinator.phase == .riding(leg: 1, tripID: "trip-A", confirmed: true, tracking: .lost))
+        coordinator.stop()
+    }
+
     /// Walk (stub, 2 checkpoints) → Red Kendall→Park St → transfer → Green Park St→Copley → walk.
     func makePlan() -> JourneyPlan {
         let origin = FakeTransit.point(8, -0.0003)
@@ -145,7 +179,12 @@ import Testing
         let glove = SimulatedGlove(); glove.connect()
         let coordinator = JourneyCoordinator(controller: PointController(glove: glove), transit: FakeTransit(), pollInterval: .seconds(60))
         var events: [JourneyCoordinator.Event] = []
-        coordinator.onEvent = { events.append($0) }
+        coordinator.onEvent = {
+            events.append($0)
+            if case .walkingLegStarted(2, _) = $0 {
+                #expect(coordinator.awaitingSignal) // UI must see the hold before announcing a walking leg.
+            }
+        }
         // A two-leg plan: walk → Green Park St→Copley → walk, alighting with no GPS for minutes.
         let park = FakeTransit.stations[3], copley = FakeTransit.stations[8]
         let walk1 = TransitPlanner.stubWalk(from: FakeTransit.point(16, -0.0002), to: park.coordinate, name: park.name)
@@ -168,6 +207,56 @@ import Testing
         coordinator.updateLocation(fix(FakeTransit.point(16.0001, 12), seconds: 660, accuracy: 8), now: epoch.addingTimeInterval(661))
         #expect(!coordinator.awaitingSignal)
         #expect(events.contains(.signalRestored(leg: 2)))
+    }
+
+    @Test func testModeCuesArrivalsAtTheBoardStopWhileStillWalking() throws {
+        let glove = SimulatedGlove(); glove.connect()
+        let coordinator = JourneyCoordinator(controller: PointController(glove: glove), transit: FakeTransit(), pollInterval: .seconds(60))
+        coordinator.cueArrivalsWhileWalking = true
+        var events: [JourneyCoordinator.Event] = []
+        coordinator.onEvent = { events.append($0) }
+        let plan = makePlan()
+        try coordinator.start(plan, at: nil, now: epoch)
+        #expect(coordinator.phase == .walking(leg: 0))
+        // A train stopped at our platform while we are still walking: buzz once, stay walking, show the countdown.
+        coordinator.handleArrivals([arrival("trip-A", status: .stoppedAt, platform: "r-kendall-s", seconds: 30)], now: epoch)
+        #expect(coordinator.phase == .walking(leg: 0))
+        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 1)
+        #expect(events.contains(.vehicleArriving(plan.rides[0])))
+        #expect(coordinator.countdown?.secondsAway == 30)
+        coordinator.handleArrivals([arrival("trip-A", status: .stoppedAt, platform: "r-kendall-s", seconds: 30),
+                                    arrival("trip-B", pattern: "Red-3-0", status: .inTransitTo, platform: "r-charles-s", seconds: 400),
+                                    arrival("trip-C", status: .inTransitTo, platform: "r-charles-s", seconds: 800),
+                                    arrival("trip-D", status: .inTransitTo, platform: "r-charles-s", seconds: 1300)], now: epoch)
+        #expect(coordinator.countdown?.following == [400, 800]) // The next two after the first.
+        coordinator.handleArrivals([arrival("trip-A", status: .stoppedAt, platform: "r-kendall-s", seconds: 20)], now: epoch.addingTimeInterval(10))
+        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 1) // Same trip/status: no repeat.
+        // Wrong direction never cues; a different trip that is imminent (no vehicle yet) does.
+        coordinator.handleArrivals([TransitArrival(tripID: "north", patternID: "Red-1-1", headsign: "Alewife", time: epoch.addingTimeInterval(70), status: nil,
+                                                   vehicle: VehicleStatus(vehicleID: "N", status: .stoppedAt, platformStopID: "r-kendall-n", coordinate: nil, updatedAt: epoch)),
+                                    TransitArrival(tripID: "trip-B", patternID: "Red-3-0", headsign: "Braintree", time: epoch.addingTimeInterval(100), status: nil, vehicle: nil)],
+                                   now: epoch.addingTimeInterval(60))
+        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 2)
+        // Every ride's board stop is watched, not just the next one: a Green Line train at Park St cues too.
+        let green = TransitArrival(tripID: "trip-G", patternID: "Green-B-0", headsign: "Boston College", time: nil, status: nil,
+                                   vehicle: VehicleStatus(vehicleID: "G", status: .incomingAt, platformStopID: "g-park-w", coordinate: nil, updatedAt: epoch))
+        coordinator.handleTestArrivals([green], ride: plan.rides[1], now: epoch.addingTimeInterval(70))
+        #expect(glove.commands.filter { $0 == .vehicleArrived }.count == 3)
+        #expect(coordinator.phase == .walking(leg: 0))
+        #expect(events.contains(.vehicleArriving(plan.rides[1])))
+        // Default: no cue while walking, but the countdown still shows.
+        let quiet = JourneyCoordinator(controller: PointController(glove: glove), transit: FakeTransit(), pollInterval: .seconds(60))
+        #expect(!quiet.cueArrivalsWhileWalking)
+        try quiet.start(makePlan(), at: nil, now: epoch)
+        let before = glove.commands.count
+        quiet.handleArrivals([arrival("trip-C", status: .stoppedAt, platform: "r-kendall-s", seconds: 90)], now: epoch)
+        #expect(glove.commands.count == before)
+        #expect(quiet.countdown?.secondsAway == 90)
+        // At the stop, the same arrival cues.
+        quiet.confirmAtStop(now: epoch)
+        quiet.handleArrivals([arrival("trip-C", status: .stoppedAt, platform: "r-kendall-s")], now: epoch.addingTimeInterval(5))
+        #expect(glove.commands.count == before + 2) // stop (leaving the walk) + vehicleArrived
+        #expect(glove.commands.last == .vehicleArrived)
     }
 
     @Test func wrongTrainAndMissedStopAskForAReplan() throws {

@@ -41,7 +41,7 @@ public enum HapticCommand: Equatable {
     func send(_ command: HapticCommand) throws
 }
 
-public enum GloveTransportError: Error { case notConnected, unsupported }
+public enum GloveTransportError: Error { case notConnected, unsupported, busy }
 
 /// Develop UI, route progression and feedback without access to a glove.
 @MainActor public final class SimulatedGlove: GloveTransport {

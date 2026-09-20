@@ -63,8 +63,8 @@ struct HandVoiceInteraction: View {
                 .opacity(!active || (!motion.frameReady && !motion.finished) ? 1 : 0)
                 .allowsHitTesting(!active)
                 .accessibilityHidden(active)
-                .accessibilityLabel("Speak a destination")
-                .accessibilityHint("Starts listening. Say where you want to go; recording ends when you pause.")
+                .accessibilityLabel("Speak to Point")
+                .accessibilityHint("Say a destination or enter demo mode. Recording ends when you pause.")
 
                 if let displayedFrame, active {
                     Image(decorative: displayedFrame.image, scale: 1)

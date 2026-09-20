@@ -16,9 +16,8 @@ final class AccessibilityAuditTests: XCTestCase {
     func testHomeScreenIsNavigable() throws {
         launch()
         XCTAssertTrue(app.staticTexts["Where to?"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Speak a destination"].exists)
+        XCTAssertTrue(app.buttons["Speak to Point"].exists)
         XCTAssertTrue(app.buttons["Type a destination instead"].exists)
-        XCTAssertTrue(app.buttons["Test beacons"].exists)
         XCTAssertTrue(deviceSetupButton.exists, "Device setup button needs a label describing connection state")
         assertEveryControlIsLabeled()
         try audit("home")
@@ -42,7 +41,7 @@ final class AccessibilityAuditTests: XCTestCase {
         XCTAssertTrue(app.buttons["Reply"].exists)
         XCTAssertTrue(app.buttons["Cancel"].exists)
         XCTAssertTrue(app.buttons["Type a destination instead"].exists)
-        XCTAssertFalse(app.buttons["Speak a destination"].exists, "Glove artwork must leave the VoiceOver order once listening starts")
+        XCTAssertFalse(app.buttons["Speak to Point"].exists, "Glove artwork must leave the VoiceOver order once listening starts")
         assertEveryControlIsLabeled()
         try audit("clarifying prompt")
     }
@@ -53,7 +52,7 @@ final class AccessibilityAuditTests: XCTestCase {
         XCTAssertTrue(app.buttons["Back to voice search"].exists)
         XCTAssertTrue(app.buttons["Change destination"].exists)
         XCTAssertTrue(app.staticTexts["Shake Shack"].exists)
-        XCTAssertFalse(app.buttons["Speak a destination"].exists, "Home controls must be hidden from VoiceOver behind the route")
+        XCTAssertFalse(app.buttons["Speak to Point"].exists, "Home controls must be hidden from VoiceOver behind the route")
         XCTAssertEqual(app.buttons["Try the walk"].label, "Try the walk", "Decorative arrow must not be read as part of the button")
         assertEveryControlIsLabeled()
         try audit("route preview")
@@ -75,9 +74,9 @@ final class AccessibilityAuditTests: XCTestCase {
 
     func testBeaconTestIsNavigable() throws {
         launch("--test-beacons")
-        XCTAssertTrue(app.staticTexts["Nearby beacon test"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Done"].exists)
-        XCTAssertTrue(app.buttons["Test vibration"].exists)
+        XCTAssertTrue(app.staticTexts["Indoor demo"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Exit demo"].exists)
+        XCTAssertTrue(app.buttons["Demo help"].exists)
         assertEveryControlIsLabeled()
         try audit("beacon test")
     }

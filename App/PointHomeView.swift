@@ -4,24 +4,23 @@ import SwiftUI
 
 struct PointHomeView: View {
     @StateObject private var model = PointViewModel()
-    @StateObject private var deviceConnection = DeviceConnection()
+    var body: some View {
+        PointHomeContent(model: model, deviceConnection: model.deviceConnection)
+    }
+}
+
+private struct PointHomeContent: View {
+    @ObservedObject var model: PointViewModel
+    @ObservedObject var deviceConnection: DeviceConnection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .largeTitle) private var titleSize = 36
-    @State private var panelCollapsed = false
-    @State private var panelDrag: CGFloat = 0
-    @State private var panelFullHeight: CGFloat = 300
-    @State private var panelHeaderHeight: CGFloat = 200
-
-    /// The sheet's content never changes; only how much of it is visible does. The finger changes
-    /// the height live, release springs to header-only or full, and the map inset follows.
-    private var panelSnappedHeight: CGFloat { panelCollapsed ? panelHeaderHeight : panelFullHeight }
-    private var panelVisibleHeight: CGFloat { min(panelFullHeight, max(panelHeaderHeight, panelSnappedHeight - panelDrag)) }
+    @State private var routePanelHeight: CGFloat = 300
     @State private var reveal: CGFloat = 0
     @State private var showTyping = false
     @State private var showDeviceSetup = false
-    @State private var showBeaconTest = false
     @State private var typedDestination = ""
     @State private var voiceCenter = CGPoint.zero
     @FocusState private var typingFocused: Bool
@@ -34,7 +33,7 @@ struct PointHomeView: View {
         GeometryReader { geometry in
             ZStack {
                 PointTheme.background.ignoresSafeArea()
-                HomeMapBackdrop(isActive: model.stage != .route && !showTyping && !showDeviceSetup && model.stage != .choosing)
+                HomeMapBackdrop(isActive: model.stage != .route && model.stage != .indoorDemo && !showTyping && !showDeviceSetup && model.stage != .choosing)
                     .ignoresSafeArea().opacity(1 - reveal)
                 home
                     .scaleEffect(reduceMotion ? 1 : 1 + reveal * 0.42, anchor: .init(x: 0.54, y: 0.6))
@@ -47,10 +46,11 @@ struct PointHomeView: View {
                                  phoneLocation: model.currentLocation, telemetry: model.mapTelemetry,
                                  journey: model.journeyPlan, journeyLegIndex: model.journeyPhase.legIndex)
                         .id(route.id)
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                         // The map fills the screen under the sheet; only its content (camera framing,
                         // attribution) is inset by the sheet's height. Dragging the sheet reveals map,
                         // never background, and the map view itself never resizes per frame.
-                        .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: panelSnappedHeight) }
+                        .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: routePanelHeight) }
                         .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: geometry.safeAreaInsets.top + 72) } // status bar + controls row
                         .ignoresSafeArea()
                         .scaleEffect(reduceMotion ? 1 : 1.12 - reveal * 0.12)
@@ -58,7 +58,8 @@ struct PointHomeView: View {
                             if reduceMotion { Rectangle().opacity(reveal) }
                             else { PortalReveal(progress: reveal, origin: voiceCenter == .zero ? CGPoint(x: geometry.size.width * 0.49, y: geometry.size.height * 0.6) : voiceCenter) }
                         }
-                    routeControls(maxPanelHeight: geometry.size.height * 0.62, bottomInset: geometry.safeAreaInsets.bottom)
+                    routeControls(maxPanelHeight: dynamicTypeSize.isAccessibilitySize ? geometry.size.height - 84 : geometry.size.height * 0.62,
+                                  bottomInset: geometry.safeAreaInsets.bottom)
                         .opacity(reveal)
                         .offset(y: reduceMotion ? 0 : 18 * (1 - reveal))
                 }
@@ -67,7 +68,6 @@ struct PointHomeView: View {
         }
         .tint(PointTheme.action)
         .onChange(of: model.stage) { _, stage in
-            if stage != .route { panelCollapsed = false; panelDrag = 0 }
             withAnimation(reduceMotion ? .easeOut(duration: 0.18) : transitionAnimation) {
                 reveal = stage == .route ? 1 : 0
             }
@@ -80,20 +80,29 @@ struct PointHomeView: View {
         .onChange(of: showDeviceSetup) { _, shown in if shown { model.pauseJourney() } }
         .sheet(isPresented: $showTyping) { typingSheet }
         .sheet(isPresented: $showDeviceSetup) { DeviceSetupView(connection: deviceConnection) }
-        .fullScreenCover(isPresented: $showBeaconTest) { CameraBeaconTestView() }
+        .fullScreenCover(isPresented: Binding(get: { model.stage == .indoorDemo },
+                                             set: { if !$0 { model.leaveIndoorDemo() } })) {
+            CameraBeaconTestView(onInstruction: model.indoorDemoInstruction)
+        }
         .sheet(isPresented: Binding(get: { model.stage == .choosing }, set: { if !$0 && model.stage == .choosing { model.cancel() } })) { destinationSheet }
         .sheet(isPresented: Binding(get: { model.stage == .journeyChoice }, set: { if !$0 && model.stage == .journeyChoice { model.cancel() } })) { journeySheet }
         .onAppear {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--preview-point-ai") { model.previewPointAI() }
+            if ProcessInfo.processInfo.arguments.contains("--preview-transit") { model.previewTransit() }
             #endif
             if ProcessInfo.processInfo.arguments.contains("--preview-route") { model.preview() }
             if ProcessInfo.processInfo.arguments.contains("--device-setup") { showDeviceSetup = true }
-            if ProcessInfo.processInfo.arguments.contains("--test-beacons") { showBeaconTest = true }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--demo-mode") || ProcessInfo.processInfo.arguments.contains("--test-beacons") {
+                model.searchTyped("Can you go into demo mode?")
+            }
+            #endif
         }
         .task {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--preview-point-ai") { return }
+            if ProcessInfo.processInfo.arguments.contains("--preview-transit") { return }
+            if ProcessInfo.processInfo.arguments.contains("--preview-point-ai") || ProcessInfo.processInfo.arguments.contains("--demo-mode") { return }
             #endif
             // Microphone, speech, location, then Bluetooth: iOS queues the prompts in order.
             await model.requestPermissions()
@@ -106,7 +115,6 @@ struct PointHomeView: View {
             HStack(alignment: .center, spacing: 8) {
                 wordmark
                 Spacer()
-                if model.stage == .home { beaconTestButton }
                 deviceSetupButton
             }
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
@@ -158,24 +166,6 @@ struct PointHomeView: View {
         }
     }
 
-    private var beaconTestButton: some View {
-        Button { model.openBeaconTest(); showBeaconTest = true } label: {
-            ViewThatFits(in: .horizontal) {
-                Label("Test beacons", systemImage: "viewfinder")
-                    .fixedSize()
-                Image(systemName: "viewfinder")
-                    .frame(minWidth: 24)
-            }
-            .font(.subheadline.weight(.medium))
-            .frame(minHeight: 48)
-            .padding(.horizontal, 12)
-            .foregroundStyle(.white)
-            .background(.black.opacity(0.8), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Test beacons")
-    }
-
     private var wordmark: some View {
         HStack(alignment: .firstTextBaseline, spacing: 1) {
             Text("point").font(.title2.weight(.bold)).tracking(-1)
@@ -210,6 +200,7 @@ struct PointHomeView: View {
                     .background(PointTheme.background, in: Capsule())
             }
             .padding(.horizontal, 24).padding(.top, 12)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             Spacer()
             routeSheet(maxPanelHeight: maxPanelHeight, bottomInset: bottomInset)
         }
@@ -218,57 +209,28 @@ struct PointHomeView: View {
         .ignoresSafeArea(edges: .bottom)
     }
 
-    /// A bottom sheet that follows the finger. The header (grabber, destination, current action) is
-    /// always visible; dragging slides the details below it off screen. Release snaps open or closed
-    /// from position and velocity. The map's bottom padding tracks the live offset.
-    private func routeSheet(maxPanelHeight _: CGFloat, bottomInset: CGFloat) -> some View {
-        let drag = DragGesture(minimumDistance: 6, coordinateSpace: .global)
-            .onChanged { value in panelDrag = value.translation.height }
-            .onEnded { value in
-                // Snap to whichever state the projected height is nearer.
-                let projected = panelSnappedHeight - value.predictedEndTranslation.height
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
-                    panelCollapsed = projected < (panelHeaderHeight + panelFullHeight) / 2
-                    panelDrag = 0
-                }
-            }
-        return VStack(alignment: .leading, spacing: 0) {
-            // Header: what needs a hand right now.
-            VStack(alignment: .leading, spacing: 14) {
-                Capsule().fill(.secondary.opacity(0.5)).frame(width: 40, height: 5).frame(maxWidth: .infinity)
-                    .padding(.top, 8)
-                    .accessibilityLabel(panelCollapsed ? "Expand details" : "Collapse details")
-                    .accessibilityAddTraits(.isButton)
+    private func routeSheet(maxPanelHeight: CGFloat, bottomInset: CGFloat) -> some View {
+        RouteBottomSheet(maxHeight: maxPanelHeight, bottomInset: bottomInset,
+                         onHeight: { routePanelHeight = $0 }) {
+            VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 7) {
                         Text(model.selectedPlace?.name ?? "Destination")
-                            .font(.title.weight(.semibold)).tracking(-0.7)
+                            .font(model.journeyStarted && model.journeyPlan != nil ? .title3.weight(.semibold) : .title.weight(.semibold)).tracking(-0.7)
                             .accessibilityAddTraits(.isHeader)
-                        Text(model.selectedPlace?.address ?? "")
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        if !model.journeyStarted || model.journeyPlan == nil {
+                            Text(model.selectedPlace?.address ?? "")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer(minLength: 12)
-                    Image(systemName: "location.north.circle")
-                        .font(.largeTitle).foregroundStyle(PointTheme.action)
-                        .accessibilityHidden(true)
                 }
                 if model.journeyStarted, model.journeyPlan != nil { journeyControls }
                 else if model.journeyStarted, !model.isDemo, model.usePhoneAsGlove { Text(model.phoneTester.status).font(.subheadline.weight(.medium)) }
                 else if !model.journeyStarted { startRow }
             }
-            .padding(.horizontal, 26).padding(.top, 10).padding(.bottom, 18)
-            .background {
-                GeometryReader { g in
-                    Color.clear
-                        .onAppear { panelHeaderHeight = g.size.height + bottomInset }
-                        .onChange(of: g.size.height) { _, height in panelHeaderHeight = height + bottomInset }
-                }
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) { panelCollapsed.toggle() } }
-            .gesture(drag)
-
-            // Details: always in the tree; the sheet's visible height decides how much shows.
+        } details: {
             VStack(alignment: .leading, spacing: 18) {
                     if model.journeyPlan != nil { journeyLegs }
                     Divider()
@@ -286,7 +248,7 @@ struct PointHomeView: View {
                                 .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
                             }
                         } else if model.journeyPlan == nil {
-                            Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : "Glove direction feedback is not available yet",
+                        Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : model.gloveStatus,
                                   systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
                                 .font(.subheadline.weight(.medium))
                         }
@@ -304,26 +266,11 @@ struct PointHomeView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    Text(model.isDemo ? "Sample route · Simulated glove" : model.usePhoneAsGlove ? "Route tracks while locked · Unlock for phone vibration" : deviceConnection.isConnected ? "Bluetooth verified · Sensor firmware pending" : "Glove not connected")
+                Text(model.isDemo ? "Sample route · Simulated glove" : model.usePhoneAsGlove ? "Route tracks while locked · Unlock for phone vibration" : deviceConnection.isConnected ? deviceConnection.firmwareMessage : "Glove not connected")
                         .font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 26)
-            .padding(.bottom, bottomInset + 2) // Clear of the home indicator; nothing extra.
         }
-        // Natural (full) height: fixedSize makes the content report its ideal height even though the
-        // frame below clips it; measured directly, since a preference did not survive the Map.
-        .fixedSize(horizontal: false, vertical: true)
-        .background {
-            GeometryReader { g in
-                Color.clear
-                    .onAppear { panelFullHeight = g.size.height }
-                    .onChange(of: g.size.height) { _, height in panelFullHeight = height }
-            }
-        }
-        .frame(height: panelVisibleHeight, alignment: .top)
-        .clipped()
-        .background(PointTheme.background)
     }
 
     private var startRow: some View {
@@ -348,23 +295,7 @@ struct PointHomeView: View {
                 ForEach(Array(plan.legs.enumerated()), id: \.offset) { index, leg in
                     let isCurrent = model.journeyPhase.legIndex == index
                     let isPassed = model.journeyPhase.legIndex.map { index < $0 } ?? false
-                    HStack(spacing: 8) {
-                        switch leg {
-                        case .walk(let walk):
-                            Image(systemName: "figure.walk").frame(width: 20)
-                            Text("Walk to \(walk.destinationName)")
-                        case .ride(let ride):
-                            Image(systemName: ride.route.isBus ? "bus.fill" : "tram.fill").foregroundStyle(ride.route.isBus ? Color(red: 0.29, green: 0.44, blue: 0.65) : Color(hex: ride.route.colorHex)).frame(width: 20)
-                            Text("\(ride.route.name) toward \(ride.headsign) · \(ride.stopsRidden) \(ride.stopsRidden == 1 ? "stop" : "stops") to \(ride.alight.name)")
-                        case .transfer(let station):
-                            Image(systemName: "arrow.triangle.swap").frame(width: 20)
-                            Text("Change at \(station.name)")
-                        }
-                    }
-                    .font(.subheadline.weight(isCurrent ? .semibold : .regular))
-                    .foregroundStyle(isPassed ? .secondary : .primary)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityAddTraits(isCurrent ? .isSelected : [])
+                    JourneyLegRow(leg: leg, current: isCurrent, passed: isPassed)
                 }
                 if let alert = model.transitAlerts.first {
                     Label(alert.header, systemImage: alert.isElevatorClosure ? "figure.roll" : "exclamationmark.triangle.fill")
@@ -377,12 +308,26 @@ struct PointHomeView: View {
     /// Phase text plus the manual overrides that back up automatic boarding/alighting.
     private var journeyControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(model.journeyStatusText, systemImage: journeyGlyph)
-                .font(.subheadline.weight(.medium))
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: journeyGlyph)
+                    .font(.body).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .accessibilityHidden(true)
+                Text(model.journeyStatusText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+                .font(.headline)
+                .accessibilityElement(children: .combine)
                 .contentTransition(.opacity)
                 .animation(.easeOut(duration: 0.2), value: model.journeyStatusText)
                 .accessibilityAddTraits(.updatesFrequently)
-            HStack(spacing: 12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { journeyActions }
+                VStack(spacing: 8) { journeyActions }
+            }
+        }
+    }
+
+    @ViewBuilder private var journeyActions: some View {
                 switch model.journeyPhase {
                 case .walking where model.journeyPhase.legIndex.map({ $0 + 1 < (model.journeyPlan?.legs.count ?? 0) }) == true:
                     journeyButton("I'm at the stop") { model.confirmAtStop() }
@@ -397,8 +342,6 @@ struct PointHomeView: View {
                     journeyButton("Replan from here") { model.replanJourney() }
                 default: EmptyView()
                 }
-            }
-        }
     }
 
     private var journeyGlyph: String {
@@ -406,7 +349,7 @@ struct PointHomeView: View {
         case .walking: return model.awaitingSignal ? "antenna.radiowaves.left.and.right.slash" : "figure.walk"
         case .waitingAtStop: return model.liveTransitData ? "clock" : "antenna.radiowaves.left.and.right.slash"
         case .vehicleArriving: return "bell.fill"
-        case .riding(_, _, _, let tracking): return tracking == .lost ? "questionmark.circle" : "tram.fill"
+        case .riding(_, _, _, let tracking): return tracking == .lost ? "questionmark.circle" : (model.currentRideIsBus ? "bus.fill" : "tram.fill")
         case .alighting: return "arrow.down.right.circle.fill"
         case .needsReplan: return "exclamationmark.triangle.fill"
         case .arrived: return "flag.checkered"
@@ -416,8 +359,10 @@ struct PointHomeView: View {
 
     private func journeyButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(title, action: action)
-            .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
-            .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+            .font(.body.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var journeySheet: some View {
@@ -426,27 +371,14 @@ struct PointHomeView: View {
                 if !model.transcript.isEmpty { Section { Text(model.transcript).foregroundStyle(.secondary) } }
                 ForEach(model.journeyCandidates) { plan in
                     Button { model.selectJourney(plan) } label: {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 6) {
-                                ForEach(Array(plan.legs.enumerated()), id: \.offset) { _, leg in
-                                    switch leg {
-                                    case .walk: Image(systemName: "figure.walk")
-                                    case .ride(let ride):
-                                        Label(ride.route.name, systemImage: ride.route.isBus ? "bus.fill" : "tram.fill")
-                                            .font(.caption.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 4)
-                                            .foregroundStyle(.white).background(ride.route.isBus ? Color(red: 0.29, green: 0.44, blue: 0.65) : Color(hex: ride.route.colorHex), in: Capsule())
-                                    case .transfer: Image(systemName: "arrow.triangle.swap")
-                                    }
-                                }
-                            }
-                            .accessibilityHidden(true)
-                            Text(plan.summary).font(.subheadline).foregroundStyle(.primary)
-                        }.padding(.vertical, 6)
+                        JourneyChoiceRow(plan: plan)
                     }
+                    .buttonStyle(.plain)
                 }
-                Section { Text("MBTA live data · Apple Maps walking").font(.caption).foregroundStyle(.secondary) }
+                Section { Text("Routes from MBTA · Walking directions from Apple Maps").font(.caption).foregroundStyle(.secondary) }
             }
-            .navigationTitle("Take this route?")
+            .navigationTitle("Routes")
+            .tint(PointTheme.action)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { model.cancel() } } }
         }
     }
@@ -639,4 +571,3 @@ private struct RouteLoadingGlyph: View {
         .accessibilityLabel("Preparing route")
     }
 }
-

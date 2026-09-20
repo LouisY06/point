@@ -1,8 +1,8 @@
 # Hardware boundary — draft
 
-The hardware team owns the board, sensors, wiring, firmware and motor. The current connection prototype uses the XIAO ESP32-C6 and lives in `Firmware/BTTest`. Point can discover its service, connect, subscribe to replies, and verify a unique echoed message. See [device setup](DEVICE_SETUP.md) for the physical-iPhone test procedure.
+The hardware team owns the board, sensors, wiring, firmware and motor. The active target is the XIAO ESP32-S3 with MPU6050 and DRV2605L; Kuan's `firmware` branch contains the circuit-test sketch and current pinout. `Firmware/BTTest` is the older ESP32-C6 BLE echo prototype. Point can discover that service, connect, subscribe to replies, and verify a unique echoed message. See [device setup](DEVICE_SETUP.md) for the physical-iPhone test procedure.
 
-The echo link is separate from the navigation interface below. Its firmware does not yet provide heading, gestures, battery, or motor control; successful connection verification does not imply those capabilities exist.
+The echo link is separate from the navigation interface below. Its firmware does not yet provide heading, gestures, battery, or motor control; successful connection verification does not imply those capabilities exist. The app now implements a capability-gated [proposed S3 protocol](FIRMWARE_APP_PROTOCOL.md), including the real route transport and motor-test control. The board still needs to implement that contract; no hardware integration is claimed verified.
 
 ## Glove → phone
 
@@ -16,7 +16,7 @@ The echo link is separate from the navigation interface below. Its firmware does
 
 The adapter must convert board axes, mounting orientation, handedness and sensor reference into the agreed pointing frame. Raw gyro yaw alone is not an absolute heading. Magnetic-north readings need a known conversion before use. Phone GPS supplies position; phone orientation does not describe the glove.
 
-BLE packet timestamps need translation to a phone clock, or bounded latency/age information. Simply assigning an old buffered packet a fresh receipt timestamp is not sufficient. The echo service UUIDs are implemented and documented in the firmware. The navigation service's characteristics, frequency, encoding, acknowledgements and sequence IDs remain to be agreed.
+BLE packet timestamps need translation to a phone clock, or bounded latency/age information. Simply assigning an old buffered packet a fresh receipt timestamp is not sufficient. The proposed v1 uses correlated heading requests, full round-trip time plus reported sample age, and a 500 ms freshness limit. It reuses the echo characteristics with versioned binary messages. Firmware adoption of the proposal remains to be agreed.
 
 ## Phone → glove
 
@@ -30,4 +30,4 @@ Firmware must stop a finite pulse locally even if Bluetooth disconnects or iOS s
 
 ## App development without hardware
 
-`SimulatedGlove` implements `GloveTransport`. The command-line demo injects heading changes and prints motor commands. The UI has a labeled sample route and simulated pointing toggle. Swap the transport after the actual BLE contract exists. Custom gesture learning and belt-specific behavior are deferred.
+`SimulatedGlove` implements `GloveTransport`. The command-line demo injects heading changes and prints motor commands. The UI has a labeled sample route and simulated pointing toggle. Real glove mode selects `FirmwareGlove`; a legacy echo-only board stays unavailable for guidance. Connect through Device setup, then turn off Phone vibration guidance before starting a real walk. Custom gesture learning and belt-specific behavior are deferred.
