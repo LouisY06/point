@@ -22,6 +22,13 @@ import UIKit
     var needsConfirmation: Bool { pendingRoute != nil }
     @Published var isDemo = false
     @Published var journeyStarted = false
+    enum RouteReplyState { case idle, listening, processing }
+    @Published private(set) var routeReplyState: RouteReplyState = .idle
+    @Published private(set) var routeStartMessage = ""
+    private var routeStartID: UUID?
+    private var recordingRouteID: UUID?
+    var awaitingRouteStart: Bool { routeStartID != nil && routeStartID == route?.id && !journeyStarted }
+    private var listening: Bool { stage == .recording || routeReplyState == .listening }
     @Published var pointingAligned = false
     @Published var demoInFlight = false
     @Published var currentLocation: CLLocation?
@@ -140,16 +147,17 @@ import UIKit
         }.store(in: &subscriptions)
         // Words appear as they are spoken; the final transcript replaces them after finishing.
         recorder.$liveTranscript.sink { [weak self] text in
-            guard let self, stage == .recording else { return }
+            guard let self, listening else { return }
             transcript = text
         }.store(in: &subscriptions)
         recorder.$endpoint.sink { [weak self] endpoint in
             // Holding the microphone decides the end; pauses mid-sentence are the rider's to take.
-            guard let self, stage == .recording, !isDemo, !holdToTalkActive else { return }
+            guard let self, listening, !isDemo, !holdToTalkActive else { return }
             switch endpoint {
             case .listening: break
             case .finished: finishRecording()
             case .noSpeech:
+                if recordingRouteID != nil { deferRouteStart(announceReply: false); return }
                 recordingLimit?.cancel()
                 recorder.cancel()
                 // Cancelling capture also cancels the endpoint task delivering this event.
@@ -259,7 +267,7 @@ import UIKit
 
     /// Finger down on the talk panel: record until `releaseMicrophone`, however long the pauses.
     func holdMicrophone() {
-        guard stage != .recording else { return }
+        guard !listening else { return }
         microphoneHeld = true
         startListening(automatically: false, holdToTalk: true)
     }
@@ -267,35 +275,41 @@ import UIKit
     func releaseMicrophone() {
         microphoneHeld = false
         // A release before capture started is handled when the start task resumes.
-        if stage == .recording, holdToTalkActive { finishRecording() }
+        if listening, holdToTalkActive { finishRecording() }
     }
 
     private func startListening(automatically: Bool, holdToTalk: Bool) {
         guard !demoInFlight, UIApplication.shared.applicationState == .active else { return }
-        if stage == .recording { finishRecording(); return }
+        if listening { finishRecording(); return }
         // A hold interrupts a search in flight (and, via stopSpokenReply, whatever Point is saying).
         guard stage != .searching || holdToTalk else { return }
         work?.cancel()
         stopSpokenReply()
         transcript = ""
         holdToTalkActive = holdToTalk
+        let replyRouteID = awaitingRouteStart && stage == .route ? routeStartID : nil
+        recordingRouteID = replyRouteID
         work = Task {
             do {
                 try await recorder.start()
                 guard !Task.isCancelled, UIApplication.shared.applicationState == .active else { recorder.cancel(); return }
                 // A tap too short for capture to start: nothing was said, so do not search.
                 guard !holdToTalk || microphoneHeld else { recorder.cancel(); return }
-                stage = .recording
+                if let replyRouteID {
+                    guard awaitingRouteStart, routeStartID == replyRouteID else { recorder.cancel(); return }
+                    routeReplyState = .listening
+                } else { stage = .recording }
                 // Do not play generated speech into our own recording.
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                 if !automatically {
-                    UIAccessibility.post(notification: .announcement, argument: holdToTalk
-                                         ? "Listening. Say a destination, then let go."
-                                         : "Listening. Say a destination. I'll finish when you pause.")
+                    let instruction = replyRouteID != nil ? "Listening. Say yes to start, or no to wait."
+                        : holdToTalk ? "Listening. Say a destination, then let go."
+                        : "Listening. Say a destination. I'll finish when you pause."
+                    UIAccessibility.post(notification: .announcement, argument: instruction)
                 }
                 recordingLimit = Task {
                     try? await Task.sleep(for: .seconds(60))
-                    guard !Task.isCancelled, stage == .recording else { return }
+                    guard !Task.isCancelled, listening else { return }
                     finishRecording()
                 }
             } catch { fail(error) }
@@ -303,13 +317,18 @@ import UIKit
     }
 
     private func finishRecording() {
-        guard stage == .recording else { return }
+        guard listening else { return }
         recordingLimit?.cancel()
-        stage = .searching
+        let replyRouteID = recordingRouteID
+        if replyRouteID != nil { routeReplyState = .processing }
+        else { stage = .searching }
         work = Task {
             do {
                 let recording = try await recorder.finish()
                 guard !Task.isCancelled else { return }
+                if let replyRouteID {
+                    guard awaitingRouteStart, routeStartID == replyRouteID else { return }
+                }
                 // OpenAI gives the final transcript when configured; the live Apple Speech text
                 // is the fallback, so voice still works without a key or when the request fails.
                 var text = recording.transcript
@@ -325,6 +344,9 @@ import UIKit
                     catch { if text.isEmpty { throw error } }
                 }
                 guard !Task.isCancelled else { return }
+                if let replyRouteID {
+                    guard awaitingRouteStart, routeStartID == replyRouteID else { return }
+                }
                 guard !text.isEmpty else { throw ServiceError.emptyTranscript }
                 transcript = text
                 await search(text)
@@ -355,6 +377,21 @@ import UIKit
         if IndoorDemoCommand.matches(text) { enterIndoorDemo(); return }
         let reply = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
         if ["cancel", "never mind", "nevermind", "stop"].contains(reply) { cancel(); return }
+        if awaitingRouteStart, let answer = RouteStartReply.parse(text) {
+            routeReplyState = .idle
+            switch answer {
+            case .start: startJourney()
+            case .wait: deferRouteStart()
+            case .repeatQuestion: promptToStartRoute(routeStartAnnouncement)
+            }
+            return
+        }
+        // A new destination supersedes the old start question before any service request.
+        routeStartID = nil
+        recordingRouteID = nil
+        routeReplyState = .idle
+        routeStartMessage = ""
+        stage = .searching
         // "Take the T to…" plans transit; "walk me to…" skips the transit offer.
         if TransitPhrases.impliesTransit(text) { transitRequested = true; walkingRequested = false }
         else if TransitPhrases.impliesWalking(text) { walkingRequested = true; transitRequested = false }
@@ -523,17 +560,48 @@ import UIKit
         showRoute(pending.plan, to: pending.place)
     }
 
-    private func showRoute(_ plan: RoutePlan, to place: PlaceCandidate) {
+    private func showRoute(_ plan: RoutePlan, to place: PlaceCandidate, introduction: String? = nil) {
         pendingTransitOffer = false
         pendingRoute = nil
         followUpPrompt = nil
         requestedCity = nil
         candidates = []
         selectedPlace = place
-            route = plan
-            stage = .route
-            locationManager.startUpdatingHeading()
-        announce(NavigationSpeech.routeReady(for: place))
+        journeyPlan = nil
+        journeyStarted = false
+        route = plan
+        stage = .route
+        locationManager.startUpdatingHeading()
+        let prefix = introduction.map { "\($0) " } ?? ""
+        promptToStartRoute(prefix + NavigationSpeech.routeReady(for: place))
+    }
+
+    private var routeStartAnnouncement: String {
+        if let journeyPlan { return "Transit route ready. \(journeyPlan.summary) \(NavigationSpeech.startQuestion)" }
+        return selectedPlace.map { NavigationSpeech.routeReady(for: $0) } ?? NavigationSpeech.startQuestion
+    }
+
+    private func promptToStartRoute(_ announcement: String) {
+        guard let route, !journeyStarted else { return }
+        routeStartID = route.id
+        routeReplyState = .idle
+        routeStartMessage = "Would you like to start?"
+        stage = .route
+        announce(announcement, listensForReply: true)
+    }
+
+    func deferRouteStart(announceReply: Bool = true) {
+        guard awaitingRouteStart else { return }
+        work?.cancel()
+        recordingLimit?.cancel()
+        stopSpokenReply()
+        recorder.cancel()
+        recordingRouteID = nil
+        microphoneHeld = false
+        routeReplyState = .idle
+        routeStartMessage = "Ready when you are. Say start to begin."
+        stage = .route
+        if announceReply { announce("Okay. Your route is ready whenever you are. Say start when you're ready.") }
     }
 
     private func resolveOriginCity(at fix: CLLocation) async -> AppleMapsService.CityContext? {
@@ -609,9 +677,9 @@ import UIKit
                                                       walking: maps, transit: transit, options: options)
             guard !Task.isCancelled else { return }
             if plans.count == 1, plans[0].isWalkingOnly, let walk = plans[0].firstWalk {
-                showRoute(walk, to: place)
-                announce(transitRequested ? "I couldn't find a bus or train for that trip, so here's the walk. \(NavigationSpeech.routeReady(for: place))"
-                         : "That's close enough to walk. \(NavigationSpeech.routeReady(for: place))")
+                showRoute(walk, to: place, introduction: transitRequested
+                          ? "I couldn't find a bus or train for that trip, so here's the walk."
+                          : "That's close enough to walk.")
                 return
             }
             // Plans arrive fastest first; take it rather than asking the rider to compare routes.
@@ -636,9 +704,10 @@ import UIKit
         candidates = []
         selectedPlace = place
         route = walk
+        journeyStarted = false
         stage = .route
         locationManager.startUpdatingHeading()
-        announce("Transit route ready. \(plan.summary) Tap Start when you're ready.")
+        promptToStartRoute(routeStartAnnouncement)
     }
 
     var isWalkingLeg: Bool { if case .walking = journeyPhase { return true } else { return false } }
@@ -793,6 +862,16 @@ import UIKit
     func preview() { playVoiceDemo() }
 
     #if DEBUG
+    func previewRouteStart() {
+        cancel()
+        showSampleRoute(askToStart: true)
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "--preview-route-answer"), arguments.indices.contains(index + 1) {
+            // A simulated transcript exercises the same reply path without microphone/network input.
+            searchTyped(arguments[index + 1])
+        }
+    }
+
     func previewTransit() {
         cancel()
         currentLocation = CLLocation(coordinate: TransitReviewFixtures.origin, altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: Date())
@@ -812,17 +891,30 @@ import UIKit
     }
     #endif
 
-    private func showSampleRoute() {
+    private func showSampleRoute(askToStart: Bool = false) {
         isDemo = true
         transcript = "Take me to Shake Shack"
         selectedPlace = PlaceCandidate(id: "demo", name: "Shake Shack", address: "Sample walking route · Cambridge", coordinate: DemoRoute.coordinates.last!)
         route = DemoRoute.plan
         stage = .route
-        announce("Sample route to Shake Shack. This is a preview, not live directions.")
+        if askToStart { promptToStartRoute("Sample route to Shake Shack. \(NavigationSpeech.startQuestion)") }
+        else { announce("Sample route to Shake Shack. This is a preview, not live directions.") }
     }
 
     func startJourney() {
-        guard let route else { return }
+        guard let route, !journeyStarted else { return }
+        stopSpokenReply()
+        recordingLimit?.cancel()
+        recorder.cancel()
+        // Invalidate a recording/transcription already in flight before starting.
+        work?.cancel()
+        routeStartID = nil
+        recordingRouteID = nil
+        microphoneHeld = false
+        routeReplyState = .idle
+        routeStartMessage = ""
+        followUpPrompt = nil
+        stage = .route
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--preview-transit"), let journeyPlan {
             do { try journey.start(journeyPlan, at: currentLocation); journeyStarted = true }
@@ -897,6 +989,10 @@ import UIKit
     }
 
     func cancel() {
+        routeStartID = nil
+        recordingRouteID = nil
+        routeReplyState = .idle
+        routeStartMessage = ""
         gloveWatchdog?.cancel()
         gloveWatchdog = nil
         locationManager.allowsBackgroundLocationUpdates = false
@@ -934,6 +1030,7 @@ import UIKit
 
     func sceneInactive() {
         if stage == .indoorDemo, deviceConnection.keepsDemoRunningInBackground { return }
+        if awaitingRouteStart { deferRouteStart(announceReply: false) }
         deviceConnection.glove.northCorrection = nil
         gloveWatchdog?.cancel()
         gloveWatchdog = nil
@@ -986,6 +1083,12 @@ import UIKit
 
     private func fail(_ error: Error) {
         guard !Task.isCancelled, !(error is CancellationError) else { return }
+        if awaitingRouteStart {
+            deferRouteStart(announceReply: false)
+            routeStartMessage = "I couldn't hear your answer. Hold to reply or use Start."
+            announce("I couldn't hear your answer. Your route is still ready. Hold to reply or use the Start button.")
+            return
+        }
         message = error.localizedDescription
         // Permission failures and silence need an explicit retry, not a repeating microphone loop.
         ask(error.localizedDescription, listensForReply: false)
@@ -1013,11 +1116,18 @@ import UIKit
         stopSpokenReply()
         guard UIApplication.shared.applicationState == .active else { displayedReply = text; return }
         let expectedStage = stage
+        let expectedRouteID = routeStartID
         let finished: () -> Void = { [weak self] in
-            guard listensForReply, expectedStage == .clarifying || expectedStage == .choosing else { return }
+            guard let self, listensForReply else { return }
+            if expectedStage == .route, let expectedRouteID {
+                guard self.awaitingRouteStart, self.routeStartID == expectedRouteID, !self.isDemo else { return }
+                self.listenAfterReply(expectedStage: .route)
+                return
+            }
+            guard expectedStage == .clarifying || expectedStage == .choosing else { return }
             // Only VoiceOver gets a hands-free reply; everyone else holds the microphone to answer.
             guard UIAccessibility.isVoiceOverRunning else { return }
-            self?.listenAfterReply(expectedStage: expectedStage)
+            self.listenAfterReply(expectedStage: expectedStage)
         }
         if UIAccessibility.isVoiceOverRunning {
             displayedReply = text

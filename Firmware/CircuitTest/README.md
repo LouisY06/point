@@ -49,7 +49,7 @@ Install these libraries through Arduino Library Manager:
 - Adafruit DRV2605
 - Adafruit BusIO
 
-Select the Seeed Studio XIAO ESP32-S3 board, upload the sketch, and open the
+Select the ESP32-S3 Dev Module board matching the connected DevKit, upload the sketch, and open the
 Serial Monitor at 115200 baud.
 
 ## Test procedure

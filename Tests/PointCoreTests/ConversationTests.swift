@@ -2,6 +2,19 @@ import Testing
 @testable import PointCore
 
 struct ConversationTests {
+    @Test func preparedRouteAcceptsExplicitStartOrWaitReplies() {
+        for text in ["Yes!", "yes please", "start", "Start the route", "let’s go", "go ahead", "start navigation"] {
+            #expect(RouteStartReply.parse(text) == .start)
+        }
+        for text in ["No.", "not yet", "not now", "no thanks", "wait", "don't start walking", "do not start"] {
+            #expect(RouteStartReply.parse(text) == .wait)
+        }
+        #expect(RouteStartReply.parse("repeat that") == .repeatQuestion)
+        for text in ["", "take me to Start Cafe", "go to Yes Please Coffee", "yes but change the destination", "don't start navigation"] {
+            #expect(RouteStartReply.parse(text) != .start)
+        }
+    }
+
     @Test func voiceCommandsDoNotStealDestinations() {
         #expect(ConversationCommand.parse("I’m on board") == .boarded)
         #expect(ConversationCommand.parse("Say that again!") == .repeatReply)

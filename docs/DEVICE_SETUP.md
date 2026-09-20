@@ -50,7 +50,7 @@ A saved finger-axis mapping is restored when the same Bluetooth glove negotiates
 
 ### Restart the hardware sensors
 
-**Hardware sensor calibration → Restart sensor calibration** is separate from **Sensor moved · Set up again**. It stops motor output, restarts BNO055 fusion/calibration and remeasures the backup gyro bias. Keep the glove still until its live gyro level reaches 3/3, then move gently away from magnets to settle the compass. The saved finger direction is preserved. A hardware reset changes the room direction reference, so restore it or place the demo beacon again. The control requires the firmware's opcode-6 capability; older firmware shows an update instruction. Serial `c` is an alternative. The XIAO user LED now follows motor pulses.
+**Hardware sensor calibration → Restart sensor calibration** is separate from **Sensor moved · Set up again**. It stops motor output, restarts BNO055 fusion/calibration and remeasures the backup gyro bias. Keep the glove still until its live gyro level reaches 3/3, then move gently away from magnets to settle the compass. The saved finger direction is preserved. A hardware reset changes the room direction reference, so restore it or place the demo beacon again. The control requires the firmware's opcode-6 capability; older firmware shows an update instruction. Serial `c` is an alternative. The DevKit addressable RGB LED follows motor pulses using the RMT driver. Its pin is GPIO48 on original DevKitC-1 boards or GPIO38 on revision 1.1; use the matching firmware environment. Earlier XIAO GPIO21 LED builds targeted the wrong board.
 
 ### Remembered Bluetooth glove
 

@@ -15,7 +15,7 @@ struct VoiceConfigurationTests {
         #expect(!reply.contains("02114"))
         let park = PlaceCandidate(id: "park", name: "Boston Common", address: "Boston, MA",
                                   coordinate: place.coordinate)
-        #expect(NavigationSpeech.routeReady(for: park, handsFree: true) == "Your route to Boston Common is ready. Say start when you’re ready.")
+        #expect(NavigationSpeech.routeReady(for: park) == "Your route to Boston Common is ready. Would you like to start? Say yes or no.")
     }
 
     @Test func readsQuotedValuesAndEnvironmentOverridesWithoutTreatingBlankAsAKey() {

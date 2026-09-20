@@ -88,6 +88,7 @@ private struct PointHomeContent: View {
         .sheet(isPresented: Binding(get: { model.stage == .journeyChoice }, set: { if !$0 && model.stage == .journeyChoice { model.cancel() } })) { journeySheet }
         .onAppear {
             #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--preview-route-start") { model.previewRouteStart() }
             if ProcessInfo.processInfo.arguments.contains("--preview-point-ai") { model.previewPointAI() }
             if ProcessInfo.processInfo.arguments.contains("--preview-transit") { model.previewTransit() }
             #endif
@@ -272,6 +273,15 @@ private struct PointHomeContent: View {
     }
 
     private var startRow: some View {
+        VStack(alignment: .leading, spacing: 12) {
+        if model.awaitingRouteStart {
+            Text(model.routeStartMessage).font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.routeReplyState != .idle {
+                Text(model.routeReplyState == .listening ? "Listening for your answer…" : "Checking your answer…")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
         HStack(spacing: 16) {
             Button { model.startJourney() } label: {
                 HStack { Text(model.isDemo ? "Try the walk" : model.journeyPlan != nil ? "Start trip" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right").accessibilityHidden(true) }
@@ -283,6 +293,20 @@ private struct PointHomeContent: View {
                 Image(systemName: "magnifyingglass").font(.title3).frame(width: 54, height: 54)
                     .background(Color(uiColor: .secondarySystemBackground), in: Circle())
             }.accessibilityLabel("Change destination")
+        }
+        if model.awaitingRouteStart {
+            HStack {
+                Button("Not now") { model.deferRouteStart() }.frame(minHeight: 48)
+                Spacer()
+                Button { model.microphone() } label: {
+                    Label(model.routeReplyState == .listening ? "Send reply" : "Hold to reply", systemImage: "mic.fill")
+                        .frame(minHeight: 48)
+                }
+                .buttonStyle(HoldToTalkStyle(onPress: { model.holdMicrophone() }, onRelease: { model.releaseMicrophone() }))
+                .accessibilityLabel(model.routeReplyState == .listening ? "Send reply" : "Reply by voice")
+                .accessibilityHint("Say yes to start or no to wait. Double-tap to speak, then pause or double-tap again to send.")
+            }
+        }
         }
     }
 
