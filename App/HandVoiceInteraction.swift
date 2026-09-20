@@ -99,7 +99,7 @@ struct HandVoiceInteraction: View {
                         } else if !isDemo && !searching {
                             Button("Finish", action: onFinish).frame(minHeight: 48)
                         }
-                        Button("Cancel", role: .cancel, action: onCancel).frame(minHeight: 48)
+                        Button(role: .cancel, action: onCancel) { Text("Cancel").frame(minHeight: 48) }
                     } else {
                         Text("Tap to speak").font(.subheadline).foregroundStyle(.white.opacity(0.8))
                             .accessibilityHidden(true)
