@@ -8,7 +8,7 @@ September 20, build 20: outdoor north correction now survives temporary phone GP
 
 September 20, build 22: live phone diagnostics confirmed a valid north offset was being rejected by adding the phone's magnetic-azimuth error to glove uncertainty. Correction capture now requires a stable cluster of paired true-minus-magnetic values and uses a separate provisional 5° allowance plus observed spread. Missing north and excessive direction uncertainty have different messages. Debug builds retain a local latest-value diagnostic snapshot. Glove compass readiness and route GPS gates remain independent.
 
-September 20, build 24: outdoor vibration now follows estimated pointing within 25° for 200 ms and stops beyond 35°. This is the default, with no extra mode. Previously the app added heading and GPS bearing uncertainty to the pointing angle, making confirmation impossible for the recorded 17° glove estimate and nearby beacons. Combined uncertainty is now diagnostic only, including when a beacon is inside the GPS uncertainty circle; valid recent location, glove health and the raised-hand gate still apply. Debug snapshots include angle error, uncertainty, active beacon distance/index, queued commands, acknowledgements and transport errors.
+September 20, build 25: outdoor vibration now follows estimated pointing within 25° for 200 ms and stops beyond 35°. This is the default, with no extra mode. Previously the app added heading and GPS bearing uncertainty to the pointing angle, making confirmation impossible for the recorded 17° glove estimate and nearby beacons. Combined uncertainty is now diagnostic only, including when a beacon is inside the GPS uncertainty circle; pointing tolerates GPS gaps up to 15 seconds using the last accepted location, while beacon advancement still requires fixes no more than 5 seconds old. Glove health and the raised-hand gate still apply. Debug snapshots include angle error, uncertainty, active beacon distance/index, queued commands, acknowledgements and transport errors.
 
 Voice update: the live Apple Speech/OpenAI input flow now has Deepgram Flux spoken replies, with native speech fallback. `.env.example` documents Debug-only configuration. Speech stops on recording, cancel, inactivity and interruption; VoiceOver owns announcements when enabled. See [voice setup](VOICE_SETUP.md). City clarification, route confirmation and follow-up corrections are implemented; unrestricted conversation remains out of scope.
 
@@ -173,6 +173,7 @@ The algorithm computes the signed difference between the target bearing and glov
 | Parameter | Current value |
 | --- | --- |
 | Required heading frame | True north |
+| Maximum retained GPS age for pointing | 15 seconds |
 | Maximum heading age | 0.5 seconds |
 | Maximum heading uncertainty | 25 degrees |
 | Combined heading and position angular uncertainty | Diagnostic only |

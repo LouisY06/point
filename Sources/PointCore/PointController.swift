@@ -131,7 +131,7 @@ import Foundation
             previousTarget = navigation.beaconIndex
         }
         feedback = engine.evaluate(target: navigation.activeBeacon,
-                                   location: navigation.locationQuality == .usable ? navigation.location : nil,
+                                   location: navigation.locationQuality != .unavailable ? navigation.location : nil,
                                    heading: gloveHeading,
                                    connected: connection == .ready && capabilities?.vibration == true,
                                    enabled: outputEnabled && navigation.state == .navigating,

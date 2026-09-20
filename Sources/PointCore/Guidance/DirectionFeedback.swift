@@ -92,7 +92,9 @@ public struct DirectionFeedbackEngine {
         guard locationAge.isFinite, locationAge >= 0 else {
             reset(); return unavailable(.locationUnavailable, locationIssue: .invalid)
         }
-        guard locationAge <= 5 else {
+        // Brief GPS gaps are common indoors. Pointing may use the last accepted
+        // position for 15 seconds; navigation advancement still needs a fresh fix.
+        guard locationAge <= 15 else {
             reset(); return unavailable(.locationUnavailable, locationIssue: .stale(seconds: locationAge))
         }
         guard let heading, heading.degrees.isFinite, (0..<360).contains(heading.degrees),

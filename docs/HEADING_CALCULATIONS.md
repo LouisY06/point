@@ -176,6 +176,7 @@ From the current project tuning (see [PROJECT_PLAN.md](PROJECT_PLAN.md)):
 || Parameter | Current value |
 || --- | --- |
 || Required heading frame | True north |
+|| Maximum retained GPS age for pointing | 15 seconds |
 || Maximum heading age | 0.5 seconds |
 || Maximum heading uncertainty | 25 degrees |
 || Combined heading and position angular uncertainty | Diagnostic only |

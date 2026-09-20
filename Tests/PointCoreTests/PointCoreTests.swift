@@ -174,14 +174,25 @@ struct FeedbackTests {
         #expect(point.feedback.status == .offDirection)
         #expect(glove.commands.last == .stop)
         #expect(point.lastQueuedHapticCommand == .stop)
-        // Stale location still halts a previously active motor.
+        // Brief GPS gaps or a rejected fix keep the last accepted position usable.
         point.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: epoch.addingTimeInterval(0.6), reference: .trueNorth)),
                       now: epoch.addingTimeInterval(0.6))
         point.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: epoch.addingTimeInterval(0.81), reference: .trueNorth)),
                       now: epoch.addingTimeInterval(0.81))
         #expect(point.feedback.shouldConfirm)
-        point.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: epoch.addingTimeInterval(5.1), reference: .trueNorth)),
-                      now: epoch.addingTimeInterval(5.1))
+        point.updateLocation(location(nearBeacon, seconds: 0.9, accuracy: 40), now: epoch.addingTimeInterval(0.9))
+        #expect(point.navigation.locationQuality == .degraded)
+        #expect(point.feedback.shouldConfirm)
+        for seconds in stride(from: 1.0, through: 15.0, by: 0.5) {
+            let now = epoch.addingTimeInterval(seconds)
+            point.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: now, reference: .trueNorth)), now: now)
+            #expect(point.feedback.shouldConfirm)
+            #expect(point.navigation.beaconIndex == 0)
+            #expect(point.navigation.state == .navigating)
+        }
+        // The retained fix still expires, stopping a previously active motor.
+        point.receive(.heading(.init(degrees: 0, accuracyDegrees: 17.432, timestamp: epoch.addingTimeInterval(15.1), reference: .trueNorth)),
+                      now: epoch.addingTimeInterval(15.1))
         #expect(point.feedback.status == .locationUnavailable)
         #expect(glove.commands.last == .stop)
     }
