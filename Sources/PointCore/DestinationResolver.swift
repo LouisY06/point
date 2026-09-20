@@ -1,10 +1,10 @@
 import CoreLocation
 import Foundation
 
-/// Picks a destination without a chooser when the request is unambiguous. A chain or generic
-/// name ("McDonald's") goes to the nearest match; a qualified request ("the McDonald's on Mass
-/// Ave") trusts the search ranking, which already applied the qualifier; "nearest"/"closest"
-/// picks by distance; anything else asks the user.
+/// Picks a destination without a chooser. A chain or generic name ("McDonald's", "a coffee
+/// shop") goes to the closest result; a qualified request ("the McDonald's on Mass Ave",
+/// "77 Mass Ave") trusts the search ranking, which already applied the qualifier. The chooser
+/// only appears when the search returns nothing.
 public enum DestinationResolver {
     public enum Decision {
         case go(PlaceCandidate)
@@ -22,8 +22,8 @@ public enum DestinationResolver {
             return .go((matching.isEmpty ? candidates : matching).min { distance($0) < distance($1) }!)
         }
         if hasQualifier(query) { return .go(first) }
-        if let best = matching.min(by: { distance($0) < distance($1) }) { return .go(best) }
-        return .choose(candidates)
+        // Prefer results whose name matches what was asked for; otherwise the closest of whatever came back.
+        return .go((matching.isEmpty ? candidates : matching).min { distance($0) < distance($1) }!)
     }
 
     /// "nearest McDonald's", "closest pharmacy", "a coffee shop near me".

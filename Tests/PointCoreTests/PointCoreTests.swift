@@ -193,12 +193,15 @@ struct DestinationResolverTests {
         #expect(chosen.id == "near")
     }
 
-    @Test func unrelatedResultsStillAskTheUser() {
-        let a = place("Harvard Art Museums", "a", north: 500)
-        let b = place("MIT List Center", "b", north: 900)
-        guard case .choose(let list) = DestinationResolver.resolve(request: "take me to the gallery", candidates: [a, b], from: here)
-        else { Issue.record("expected choose"); return }
-        #expect(list.count == 2)
+    @Test func unrelatedResultsGoToTheClosestOne() {
+        let a = place("Harvard Art Museums", "a", north: 900)
+        let b = place("MIT List Center", "b", north: 500)
+        guard case .go(let chosen) = DestinationResolver.resolve(request: "take me to the gallery", candidates: [a, b], from: here)
+        else { Issue.record("expected go"); return }
+        #expect(chosen.id == "b")
+    }
+
+    @Test func noResultsStillAskTheUser() {
         guard case .choose(let empty) = DestinationResolver.resolve(request: "x", candidates: [], from: here) else { Issue.record("expected choose"); return }
         #expect(empty.isEmpty)
     }
