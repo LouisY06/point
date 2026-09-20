@@ -103,6 +103,8 @@ private struct PointHomeContent: View {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--preview-transit") { return }
             if ProcessInfo.processInfo.arguments.contains("--preview-point-ai") || ProcessInfo.processInfo.arguments.contains("--demo-mode") { return }
+            // The route preview runs the scripted voice demo; permission prompts would cover it and stall the demo.
+            if ProcessInfo.processInfo.arguments.contains("--preview-route") { return }
             #endif
             // Microphone, speech, location, then Bluetooth: iOS queues the prompts in order.
             await model.requestPermissions()
@@ -388,6 +390,7 @@ private struct PointHomeContent: View {
             Form {
                 TextField("Place or address", text: $typedDestination)
                     .focused($typingFocused).submitLabel(.search).onSubmit(submitTyped)
+                    .accessibilityLabel("Place or address")
                 Button("Find destination", action: submitTyped).disabled(typedDestination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .navigationTitle("Where to?")
