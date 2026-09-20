@@ -478,9 +478,10 @@ struct CameraBeaconTestView: View {
             Button { showHelp = true } label: {
                 Image(systemName: "questionmark.circle").font(.title3).frame(width: 44, height: 44)
             }.accessibilityLabel("Demo help")
-            Button("Done") { model.close(); dismiss() }
-                .font(.body.weight(.semibold)).frame(minWidth: 44, minHeight: 44)
-                .accessibilityLabel("Exit demo")
+            Button { model.close(); dismiss() } label: {
+                Text("Done").font(.body.weight(.semibold)).frame(minWidth: 44, minHeight: 44)
+            }
+            .accessibilityLabel("Exit demo")
         }
         // Navigation chrome stays compact; instructions and actions below retain full Dynamic Type.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
@@ -520,9 +521,11 @@ struct CameraBeaconTestView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         if let distance = model.distance {
                             Text("\(distance, specifier: "%.1f") m away").font(.body.monospacedDigit())
+                                .accessibilityLabel(Text("\(distance, specifier: "%.1f") meters away"))
                         }
                         ProgressView(value: model.intensity / 0.8).tint(PointTheme.action)
                             .accessibilityLabel("Pointing alignment")
+                            .accessibilityValue("\(Int(model.intensity / 0.8 * 100)) percent")
                     }
                     primaryButton("Pause route") { model.pauseTest(); onInstruction("Demo paused.") }
                 } else if model.finished {

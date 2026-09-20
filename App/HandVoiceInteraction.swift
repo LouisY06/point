@@ -78,8 +78,8 @@ struct HandVoiceInteraction: View {
                 VStack(spacing: 4) {
                     if prompt != nil && needsConfirmation {
                         HStack(spacing: 28) {
-                            Button(confirmTitle, action: onConfirm).frame(minHeight: 44)
-                            Button(declineTitle, action: onDecline).frame(minHeight: 44)
+                            Button(action: onConfirm) { Text(confirmTitle).frame(minHeight: 44) }
+                            Button(action: onDecline) { Text(declineTitle).frame(minHeight: 44) }
                         }
                         .font(.subheadline.weight(.medium))
                     }
@@ -99,7 +99,7 @@ struct HandVoiceInteraction: View {
                         } else if !isDemo && !searching {
                             Button("Finish", action: onFinish).frame(minHeight: 48)
                         }
-                        Button("Cancel", role: .cancel, action: onCancel).frame(minHeight: 48)
+                        Button(role: .cancel, action: onCancel) { Text("Cancel").frame(minHeight: 48) }
                     } else {
                         Text("Tap to speak").font(.subheadline).foregroundStyle(.white.opacity(0.8))
                             .accessibilityHidden(true)
@@ -177,7 +177,7 @@ struct HandVoiceInteraction: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityFocused($transcriptFocused)
-                        .accessibilityLabel(prompt ?? transcript)
+                        .accessibilityLabel(prompt ?? (transcript.isEmpty ? "Where to?" : transcript))
                     Color.clear.frame(height: 1).id("utterance-end").accessibilityHidden(true)
                     }
                 }

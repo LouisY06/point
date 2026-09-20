@@ -103,6 +103,8 @@ private struct PointHomeContent: View {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--preview-transit") { return }
             if ProcessInfo.processInfo.arguments.contains("--preview-point-ai") || ProcessInfo.processInfo.arguments.contains("--demo-mode") { return }
+            // The route preview runs the scripted voice demo; permission prompts would cover it and stall the demo.
+            if ProcessInfo.processInfo.arguments.contains("--preview-route") { return }
             #endif
             // Microphone, speech, location, then Bluetooth: iOS queues the prompts in order.
             await model.requestPermissions()
@@ -238,8 +240,9 @@ private struct PointHomeContent: View {
                         if !model.isDemo, model.usePhoneAsGlove, model.journeyPlan == nil || (model.isWalkingLeg && !model.awaitingSignal) {
                             PhonePointingStatusView(tester: model.phoneTester, beaconIndex: model.activeBeaconIndex,
                                                     beaconCount: model.route?.beacons.count ?? 0, arrived: model.journeyState == .arrived)
-                            Button("Test vibration") { model.phoneTester.testVibration() }
-                                .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
+                            Button { model.phoneTester.testVibration() } label: {
+                                Text("Test vibration").font(.subheadline.weight(.semibold)).frame(minHeight: 44)
+                            }
                             if model.journeyState != .arrived, model.journeyPlan == nil {
                                 Button(model.journeyState == .paused ? "Resume pointing" : "Pause pointing") {
                                     if model.journeyState == .paused { model.resumeJourney() }
@@ -248,15 +251,20 @@ private struct PointHomeContent: View {
                                 .font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
                             }
                         } else if model.journeyPlan == nil {
-                        Label(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : model.gloveStatus,
-                                  systemImage: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left")
-                                .font(.subheadline.weight(.medium))
+                        HStack(spacing: 6) {
+                            Image(systemName: model.pointingAligned ? "checkmark.circle.fill" : "hand.point.up.left").accessibilityHidden(true)
+                            Text(model.pointingAligned ? "You're pointing the right way" : model.isDemo ? "Point toward the next beacon" : model.gloveStatus)
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .accessibilityElement(children: .combine)
                         }
                         if model.isDemo {
                             Toggle("Simulate correct pointing", isOn: Binding(get: { model.pointingAligned }, set: { model.setDemoAlignment($0) }))
                                 .font(.subheadline)
                         }
-                        Button(model.journeyPlan != nil ? "End trip" : "End walk") { model.cancel() }.font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
+                        Button { model.cancel() } label: {
+                            Text(model.journeyPlan != nil ? "End trip" : "End walk").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 50)
+                        }
                     } else if !model.isDemo {
                         Toggle("Phone vibration guidance", isOn: $model.usePhoneAsGlove)
                             .font(.subheadline.weight(.medium))
@@ -276,7 +284,7 @@ private struct PointHomeContent: View {
     private var startRow: some View {
         HStack(spacing: 16) {
             Button { model.startJourney() } label: {
-                HStack { Text(model.isDemo ? "Try the walk" : model.journeyPlan != nil ? "Start trip" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right") }
+                HStack { Text(model.isDemo ? "Try the walk" : model.journeyPlan != nil ? "Start trip" : "Start walking"); Spacer(); Image(systemName: "arrow.up.right").accessibilityHidden(true) }
                     .font(.body.weight(.semibold)).padding(.horizontal, 20).frame(minHeight: 54)
                     .foregroundStyle(.white).background(PointTheme.accent, in: Capsule())
             }
@@ -388,6 +396,7 @@ private struct PointHomeContent: View {
             Form {
                 TextField("Place or address", text: $typedDestination)
                     .focused($typingFocused).submitLabel(.search).onSubmit(submitTyped)
+                    .accessibilityLabel("Place or address")
                 Button("Find destination", action: submitTyped).disabled(typedDestination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .navigationTitle("Where to?")
@@ -406,7 +415,7 @@ private struct PointHomeContent: View {
     private var destinationSheet: some View {
         NavigationStack {
             List {
-                Section { Text(model.transcript).foregroundStyle(.secondary) }
+                Section { Text(model.transcript).foregroundStyle(.secondary).accessibilityLabel("You said: \(model.transcript)") }
                 Section {
                     Button { model.microphone() } label: { Label("Reply by voice", systemImage: "mic.fill") }
                 }
