@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "id": "voice-to-arrival",
+  "title": "Spoken destination, one corner, arrival ends all output",
+  "tags": ["voice", "end-to-end", "arrival"],
+  "seed": 42,
+  "tickHz": 20,
+  "maxSeconds": 200,
+  "route": {
+    "kind": "generated",
+    "destinationName": "Flour Bakery",
+    "origin": [42.36207, -71.08636],
+    "legs": [
+      { "bearing": 0, "meters": 60 },
+      { "bearing": 90, "meters": 60 }
+    ]
+  },
+  "voice": {
+    "utterance": "Take me to Flour Bakery",
+    "transcriberLatencyMs": 700,
+    "searchLatencyMs": 400,
+    "routeLatencyMs": 600,
+    "userChoice": 0,
+    "candidates": [
+      {
+        "name": "Flour Bakery + Cafe",
+        "address": "190 Massachusetts Ave, Cambridge, MA",
+        "streetAddress": "190 Massachusetts Ave",
+        "coordinate": [42.36261, -71.08563]
+      }
+    ]
+  },
+  "walker": {
+    "startAt": 2,
+    "speedMps": 1.3,
+    "gps": { "accuracyMeters": 4, "noiseMeters": 1.0, "updateHz": 1 }
+  },
+  "arm": {
+    "accuracyDegrees": 2,
+    "jitterDegrees": 1.0,
+    "profile": [{ "at": 0, "track": { "errorDegrees": 4 } }]
+  },
+  "expect": [
+    {
+      "eventOrder": [
+        "voice.utterance",
+        "voice.transcript",
+        "voice.candidates",
+        "voice.selected",
+        "route.ready",
+        "nav.start",
+        "beacon.arrival",
+        "nav.arrived"
+      ]
+    },
+    { "arrival": { "beacon": "final", "beforeSeconds": 150 } },
+    { "endState": "arrived" },
+    { "silentAfter": "nav.arrived" },
+    { "confirmPulses": { "min": 10 } },
+    { "requiresIntent": "arrived" }
+  ]
+}

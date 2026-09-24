@@ -320,3 +320,26 @@ Phases 1–2 are independently useful; nothing later is required for them to pay
   behavior, and if so which triggers? The harness is ready for it, the product decision is not made.
 - **Open:** should metric baselines block CI or only annotate the PR? Starting as annotate‑only avoids
   a noisy gate while thresholds are still being tuned.
+
+## 12. Phase 1 status (branch `test-harness`)
+
+Implemented on this branch, additive only: `Sources/PointSim` (clock, seeded RNG, scenario schema,
+route builder, walker/GPS, arm/IMU, recording glove and phone-haptic adapters, scripted voice
+services, engine, trace, assertions, metrics, Markdown report), `Sources/PointSimCLI` (`point-sim`),
+`Scenarios/*.json` and `Tests/PointSimTests`. `App` is untouched; `Package.swift` gains the new
+targets and `PointCore` gains one additive, behaviour-free seam, `SyntheticRoute.plan(…)`, which
+runs synthetic geometry through the existing `RouteSegmenter` + `TurnPointExtractor`. Simulated
+routes therefore get the production checkpoint spacing (15 m) and beacon rule (start, turns over
+45°, destination) instead of a harness-local approximation — scenarios can override both via
+`checkpointSpacingMeters` and `turnThresholdDegrees`.
+
+```sh
+swift run point-sim run --all          # traces + Markdown into .sim-out/
+swift run point-sim run --scenario Scenarios/voice-to-arrival.json --seed 7
+swift test --filter PointSimTests      # the same scenarios as integration tests
+```
+
+Two production timestamps are deliberately bypassed because they use the wall clock and would make
+every simulated fix look stale: the session is started through `NavigationSession.start(_:at:now:)`
+and glove events are re-dispatched through `PointController.receive(_:now:)` with simulation time.
+Everything else runs the production objects unmodified.

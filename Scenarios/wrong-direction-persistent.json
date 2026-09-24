@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "id": "wrong-direction-persistent",
+  "title": "Pointing 90° away from the beacon never buzzes",
+  "tags": ["guidance", "safety"],
+  "seed": 7,
+  "tickHz": 20,
+  "maxSeconds": 20,
+  "route": {
+    "kind": "generated",
+    "destinationName": "Kendall Square",
+    "origin": [42.36207, -71.08636],
+    "legs": [{ "bearing": 0, "meters": 120 }]
+  },
+  "walker": {
+    "speedMps": 0,
+    "gps": { "accuracyMeters": 4, "noiseMeters": 1.0, "updateHz": 1 }
+  },
+  "arm": {
+    "accuracyDegrees": 2,
+    "jitterDegrees": 1.0,
+    "profile": [{ "at": 0, "hold": { "degrees": 90 } }]
+  },
+  "expect": [
+    { "confirmPulses": { "max": 0 } },
+    { "noConfirmBefore": { "alignedWithinDegrees": 25 } },
+    { "endState": "navigating" }
+  ]
+}
